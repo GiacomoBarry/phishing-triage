@@ -1,0 +1,86 @@
+"""Loading settings from a TOML file into the core's Settings.
+
+This lives outside the core because reading files is the caller's job.
+
+The default settings file shipped with the tool doubles as the template for
+any edited copy: an edited file must have exactly the same sections and keys,
+so a typo is reported instead of being silently ignored.
+"""
+
+import tomllib
+from importlib.resources import files
+from pathlib import Path
+from typing import Any
+
+from phishing_triage.core import Settings
+
+
+class SettingsError(ValueError):
+    """A settings file could not be read, or its contents are not valid."""
+
+
+def load_settings(path: Path | None = None) -> Settings:
+    """Load settings from a TOML file, or the defaults shipped with the tool.
+
+    Raises SettingsError with a message naming the problem.
+    """
+    defaults = tomllib.loads(_default_settings_text())
+    if path is None:
+        return _build(defaults)
+
+    try:
+        data = tomllib.loads(path.read_text("utf-8"))
+    except OSError as error:
+        message = f"settings file {path} could not be read: {error.strerror}"
+        raise SettingsError(message) from error
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
+        message = f"settings file {path} is not valid TOML: {error}"
+        raise SettingsError(message) from error
+
+    problem = _first_problem(data, template=defaults)
+    if problem:
+        raise SettingsError(f"settings file {path}: {problem}")
+    return _build(data)
+
+
+def _default_settings_text() -> str:
+    return files("phishing_triage").joinpath("settings.toml").read_text("utf-8")
+
+
+def _first_problem(data: dict[str, Any], template: dict[str, Any]) -> str | None:
+    """Return a description of the first problem in `data`, or None if it's valid."""
+    for section, template_values in template.items():
+        values = data.get(section, {})
+        if not isinstance(values, dict):
+            return f"{section} must be a section, like [{section}]"
+        for key in template_values:
+            if key not in values:
+                return f"missing {section}.{key}"
+            value = values[key]
+            # bool is a kind of int in Python, so rule it out explicitly.
+            if not isinstance(value, int) or isinstance(value, bool):
+                return f"{section}.{key} must be a whole number"
+            if value < 0:
+                return f"{section}.{key} must not be negative"
+        for key in values:
+            if key not in template_values:
+                return f"unknown setting {section}.{key}"
+
+    for section in data:
+        if section not in template:
+            return f"unknown setting {section}"
+
+    verdict = data["verdict"]
+    if verdict["suspicious_from"] < 1:
+        return "verdict.suspicious_from must be at least 1, or nothing could be clean"
+    if verdict["suspicious_from"] >= verdict["malicious_from"]:
+        return "verdict.suspicious_from must be lower than verdict.malicious_from"
+    return None
+
+
+def _build(data: dict[str, Any]) -> Settings:
+    return Settings(
+        points=data["points"],
+        suspicious_from=data["verdict"]["suspicious_from"],
+        malicious_from=data["verdict"]["malicious_from"],
+    )

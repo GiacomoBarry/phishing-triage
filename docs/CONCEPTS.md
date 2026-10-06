@@ -6,7 +6,16 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Editable install**: `uv sync` installs the project so that code changes take effect straight away, with no reinstall (`uv.lock`, `pyproject.toml`).
 - **Console script entry point**: `[project.scripts]` turns a Python function into a terminal command, `phishing-triage` (`pyproject.toml` → `cli.main`).
 - **Core/CLI split (separation of concerns)**: the logic is kept apart from input and output so it can be reused and tested (`core/` vs `cli.py`).
-- **Dependency injection**: the core is *given* its settings and Providers instead of creating them, so tests can pass in fakes (`triage(raw_email, settings, providers)` in `core/triage.py`).
+- **Dependency injection**: the core is *given* its settings, Providers and rules instead of creating them, so tests can pass in fakes such as a test-only decisive rule (`triage(raw_email, settings, providers, rules)` in `core/triage.py`, `always_decisive` in `tests/test_triage.py`).
+- **Functions as values (`Callable` type alias)**: a rule is just a function, stored in a tuple and called in a loop; `Rule` names its shape (`core/findings.py`, `BUILT_IN_RULES` in `core/rules.py`).
+- **Immutable default argument**: `rules=BUILT_IN_RULES` is a tuple, because a mutable default like a list is created once and shared between calls (`triage()` in `core/triage.py`).
+- **TOML and `tomllib`**: a simple settings-file format that Python's standard library can read (`settings.toml`, `config.py`).
+- **Package data (`importlib.resources`)**: reading a non-Python file shipped inside the package, wherever it's installed (`_default_settings_text` in `config.py`).
+- **Validating input against a template**: an edited settings file is checked against the shipped one, so typos are reported, not ignored (`_find_problem` in `config.py`).
+- **Exception chaining (`raise ... from error`)**: keeps the original error attached to the friendlier one, which helps debugging (`load_settings` in `config.py`).
+- **`any()` and generator expressions**: checking or adding up items in one readable line (`score_and_verdict` in `core/verdict.py`).
+- **De-duplicating while keeping order (`dict.fromkeys`)**: a dict keeps its keys in insertion order and can't hold repeats, so it removes duplicates without shuffling them (`_domains` in `core/rules.py`).
+- **`dataclasses.replace`**: copies a frozen dataclass with a few fields changed, used to make test settings (`settings_with_reply_to_points` in `tests/test_triage.py`).
 - **Pure function**: the output depends only on the input and nothing else changes (`incident_note()` in `core/incident_note.py`).
 - **Dataclass**: a class that mainly holds data, with the boilerplate generated for you; `frozen=True` makes it read-only (`TriageReport` in `core/report.py`, `Settings` in `core/settings.py`).
 - **Enum (StrEnum, IntEnum)**: a fixed set of named choices; a `StrEnum` member is also a string, so it turns into JSON easily (`Verdict` in `core/report.py`), and an `IntEnum` member is also a number, so it can be an exit code (`ExitCode` in `cli.py`).

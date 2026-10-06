@@ -58,6 +58,10 @@ _Avoid_: Typosquat, fake domain, spoofed domain
 The result of one red-flag rule firing against an email, carrying the evidence that triggered it.
 _Avoid_: Alert, hit, flag, indicator
 
+**Rule**:
+A check for one red flag in an email. When it fires, it produces a Finding.
+_Avoid_: Detector, signature, check
+
 **Decisive Finding**:
 A Finding strong enough to make the Verdict malicious on its own, whatever the Score.
 _Avoid_: Override, critical finding

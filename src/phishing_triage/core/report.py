@@ -10,6 +10,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from phishing_triage.core.findings import Finding
+
 FORMAT_VERSION = 1
 
 
@@ -37,6 +39,7 @@ class TriageReport:
     subject: str
 
     # The outcome.
+    findings: list[Finding]
     score: int
     verdict: Verdict
     warnings: list[str] = field(default_factory=list)

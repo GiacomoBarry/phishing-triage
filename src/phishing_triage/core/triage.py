@@ -10,9 +10,12 @@ from email.parser import BytesParser
 from importlib.metadata import version
 
 from phishing_triage.core.errors import UnparseableEmailError
+from phishing_triage.core.findings import Finding, Rule
 from phishing_triage.core.providers import Provider
-from phishing_triage.core.report import TriageReport, Verdict
+from phishing_triage.core.report import TriageReport
+from phishing_triage.core.rules import BUILT_IN_RULES
 from phishing_triage.core.settings import Settings
+from phishing_triage.core.verdict import score_and_verdict
 
 TOOL_VERSION = version("phishing-triage")
 
@@ -26,10 +29,14 @@ STANDARD_EMAIL_HEADERS = frozenset(
 
 
 def triage(
-    raw_email: bytes, settings: Settings, providers: Sequence[Provider]
+    raw_email: bytes,
+    settings: Settings,
+    providers: Sequence[Provider],
+    rules: Sequence[Rule] = BUILT_IN_RULES,
 ) -> TriageReport:
     """Run one Triage on the raw bytes of an email and return its Triage Report.
 
+    `rules` defaults to the built-in red-flag rules. Tests can pass their own.
     Raises UnparseableEmailError if the bytes are not an email at all.
     """
     message = _parse(raw_email)
@@ -39,6 +46,11 @@ def triage(
     if not from_address:
         warnings.append("The email has no From address.")
 
+    findings: list[Finding] = []
+    for rule in rules:
+        findings += rule(message, settings)
+    score, verdict = score_and_verdict(findings, settings)
+
     return TriageReport(
         report_id=str(uuid.uuid4()),
         analysed_at=datetime.now(UTC),
@@ -47,8 +59,9 @@ def triage(
         from_address=from_address,
         display_name=display_name,
         subject=str(message.get("Subject", "")),
-        score=0,
-        verdict=Verdict.CLEAN,
+        findings=findings,
+        score=score,
+        verdict=verdict,
         warnings=warnings,
     )
 

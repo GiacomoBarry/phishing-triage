@@ -14,6 +14,20 @@ from phishing_triage.cli import main
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CLEAN_EMAIL = str(FIXTURES / "clean_newsletter.eml")
+REPLY_TO_EMAIL = str(FIXTURES / "reply_to_mismatch.eml")
+
+
+def write_settings(tmp_path: Path, reply_to_points: int) -> str:
+    """Write an edited settings file, as an analyst tuning the tool would."""
+    path = tmp_path / "my-settings.toml"
+    path.write_text(
+        "[verdict]\n"
+        "suspicious_from = 30\n"
+        "malicious_from = 60\n"
+        "[points]\n"
+        f"reply_to_mismatch = {reply_to_points}\n"
+    )
+    return str(path)
 
 
 @pytest.fixture(autouse=True)
@@ -105,3 +119,91 @@ def test_failing_to_save_the_report_is_an_error_not_a_verdict(
     assert exit_code == 6
     assert "could not save the Triage Report" in captured.err
     assert json.loads(captured.out)["verdict"] == "clean"
+
+
+def test_readable_view_shows_findings_with_evidence(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    main([REPLY_TO_EMAIL])
+
+    # Only that Findings are shown: their wording is tested at the core seam.
+    out = capsys.readouterr().out
+    assert "Findings:\n  - Reply-To domain" in out
+    assert "Key Findings:\n- Reply-To domain" in out
+
+
+@pytest.mark.parametrize(
+    ("reply_to_points", "exit_code"),
+    [
+        pytest.param(30, 1, id="suspicious exits 1"),
+        pytest.param(60, 2, id="malicious exits 2"),
+    ],
+)
+def test_settings_option_loads_an_edited_settings_file(
+    tmp_path: Path, reply_to_points: int, exit_code: int
+) -> None:
+    settings_path = write_settings(tmp_path, reply_to_points)
+
+    assert main([REPLY_TO_EMAIL, "--settings", settings_path]) == exit_code
+
+
+VALID_SETTINGS = (
+    "[verdict]\nsuspicious_from = 30\nmalicious_from = 60\n"
+    "[points]\nreply_to_mismatch = 20\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("settings_text", "expected_error"),
+    [
+        pytest.param(None, "could not be read", id="missing file"),
+        pytest.param("[points\n", "not valid TOML", id="invalid TOML"),
+        pytest.param(
+            VALID_SETTINGS.replace("reply_to_mismatch = 20\n", ""),
+            "missing points.reply_to_mismatch",
+            id="missing key",
+        ),
+        pytest.param(
+            VALID_SETTINGS + "reply_to_mismach = 5\n",
+            "unknown setting points.reply_to_mismach",
+            id="misspelt key",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace("= 20", '= "twenty"'),
+            "points.reply_to_mismatch must be a whole number",
+            id="not a number",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace("suspicious_from = 30", "suspicious_from = 70"),
+            "suspicious_from must be lower than verdict.malicious_from",
+            id="thresholds out of order",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace("= 20", "= -5"),
+            "points.reply_to_mismatch must not be negative",
+            id="negative points",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace("suspicious_from = 30", "suspicious_from = 0"),
+            "verdict.suspicious_from must be at least 1",
+            id="nothing could be clean",
+        ),
+    ],
+)
+def test_broken_settings_file_exits_7_with_a_clear_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    settings_text: str | None,
+    expected_error: str,
+) -> None:
+    settings_path = tmp_path / "broken.toml"
+    if settings_text is not None:
+        settings_path.write_text(settings_text)
+
+    exit_code = main([CLEAN_EMAIL, "--settings", str(settings_path)])
+
+    err = capsys.readouterr().err
+    assert exit_code == 7
+    assert "Error: settings file" in err
+    assert expected_error in err
+    assert saved_reports(tmp_path) == []

@@ -10,7 +10,7 @@ It is also a learning and portfolio project on the path from service desk to SOC
 
 ## Status
 
-Phase 1 is in progress. The **walking skeleton** works: it parses an email, builds a Triage Report, saves it and prints the Verdict. There are no red-flag rules or Reputation Lookups yet, so every parseable email gets a clean Verdict for now. See `.scratch/phase-1-email-triage/` for the spec and tickets.
+Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. So far there is one rule (a Reply-To on a different domain from the sender) and no Reputation Lookups yet. See `.scratch/phase-1-email-triage/` for the spec and tickets.
 
 ## Getting started
 
@@ -30,6 +30,21 @@ uv run phishing-triage path/to/email.eml --json   # print the Triage Report as J
 
 Every run saves the Triage Report to `reports/<report-id>.json`. That folder is git-ignored.
 
+### How the Verdict is reached
+
+Each red-flag rule that fires adds a Finding worth some points. The points add up to a Score (capped at 100), and thresholds turn the Score into a Verdict: 0–29 clean, 30–59 suspicious, 60 or more malicious. A **Decisive Finding**, such as a confirmed malicious link, makes the Verdict malicious whatever the Score ([ADR 0002](docs/adr/0002-points-plus-decisive-findings.md)).
+
+### Tuning the settings
+
+The points and thresholds live in [`src/phishing_triage/settings.toml`](src/phishing_triage/settings.toml). To tune them, copy that file, edit the copy and pass it in:
+
+```sh
+cp src/phishing_triage/settings.toml my-settings.toml
+uv run phishing-triage path/to/email.eml --settings my-settings.toml
+```
+
+Your copy must keep every setting from the original. A missing or misspelt one stops the run with a clear error rather than being silently ignored ([ADR 0003](docs/adr/0003-settings-in-a-packaged-toml-file.md)).
+
 ### Exit codes
 
 Scripts can react to the Verdict without reading any text:
@@ -43,6 +58,7 @@ Scripts can react to the Verdict without reading any text:
 | 4 | the file is not a parseable email |
 | 5 | the command was used wrongly (for example, no file given) |
 | 6 | the Triage Report could not be saved (the Verdict is still printed) |
+| 7 | the settings file is missing or invalid |
 
 Code 2 always means malicious, so bad usage gets 5 instead of the usual 2.
 

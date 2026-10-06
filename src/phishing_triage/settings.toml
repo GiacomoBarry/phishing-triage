@@ -1,0 +1,13 @@
+# Settings for Phishing Triage.
+#
+# These are the defaults. To tune them, copy this file, edit the copy and
+# run:  phishing-triage email.eml --settings path/to/your-copy.toml
+
+# The lowest Score that gives each Verdict. Anything lower is clean.
+[verdict]
+suspicious_from = 30
+malicious_from = 60
+
+# Points each Finding adds to the Score. The Score is capped at 100.
+[points]
+reply_to_mismatch = 20

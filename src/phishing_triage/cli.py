@@ -13,11 +13,12 @@ from enum import IntEnum
 from pathlib import Path
 from typing import NoReturn
 
+from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
-    Settings,
     TriageReport,
     UnparseableEmailError,
     Verdict,
+    describe_finding,
     incident_note,
     triage,
 )
@@ -35,6 +36,7 @@ class ExitCode(IntEnum):
     UNPARSEABLE_EMAIL = 4
     USAGE_ERROR = 5
     REPORT_NOT_SAVED = 6
+    INVALID_SETTINGS = 7
 
 
 VERDICT_EXIT_CODES = {
@@ -58,13 +60,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     email_path = Path(args.email)
 
     try:
+        settings = load_settings(args.settings)
+    except SettingsError as error:
+        _print_error(str(error))
+        return ExitCode.INVALID_SETTINGS
+
+    try:
         raw_email = email_path.read_bytes()
     except OSError as error:
         _print_error(f"could not read {email_path}: {error.strerror}")
         return ExitCode.UNREADABLE_FILE
 
     try:
-        report = triage(raw_email, Settings(), providers=[])
+        report = triage(raw_email, settings, providers=[])
     except UnparseableEmailError as error:
         _print_error(f"{email_path} is not a parseable email. {error}")
         return ExitCode.UNPARSEABLE_EMAIL
@@ -98,6 +106,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="print the Triage Report as JSON instead of the readable view",
     )
+    parser.add_argument(
+        "--settings",
+        type=Path,
+        metavar="PATH",
+        help="use an edited settings file instead of the defaults",
+    )
     return parser.parse_args(argv)
 
 
@@ -120,6 +134,10 @@ def _readable_view(report: TriageReport) -> str:
         f"Subject:  {report.subject or '(no subject)'}",
     ]
     lines += [f"Warning:  {warning}" for warning in report.warnings]
+    lines += ["", "Findings:"]
+    lines += [f"  - {describe_finding(finding)}" for finding in report.findings]
+    if not report.findings:
+        lines.append("  - None.")
     lines += ["", "Incident Note", "-------------", incident_note(report)]
     return "\n".join(lines)
 
