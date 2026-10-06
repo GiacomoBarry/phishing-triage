@@ -1,0 +1,77 @@
+"""The core entry point: run one Triage on one email."""
+
+import hashlib
+import uuid
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from email import policy
+from email.message import EmailMessage
+from email.parser import BytesParser
+from importlib.metadata import version
+
+from phishing_triage.core.errors import UnparseableEmailError
+from phishing_triage.core.providers import Provider
+from phishing_triage.core.report import TriageReport, Verdict
+from phishing_triage.core.settings import Settings
+
+TOOL_VERSION = version("phishing-triage")
+
+# Headers that real emails carry. Input with none of them isn't treated as an email.
+STANDARD_EMAIL_HEADERS = frozenset(
+    {
+        "from", "to", "cc", "subject", "date", "message-id",
+        "received", "return-path", "reply-to", "sender", "mime-version",
+    }
+)
+
+
+def triage(
+    raw_email: bytes, settings: Settings, providers: Sequence[Provider]
+) -> TriageReport:
+    """Run one Triage on the raw bytes of an email and return its Triage Report.
+
+    Raises UnparseableEmailError if the bytes are not an email at all.
+    """
+    message = _parse(raw_email)
+    warnings: list[str] = []
+
+    from_address, display_name = _sender(message)
+    if not from_address:
+        warnings.append("The email has no From address.")
+
+    return TriageReport(
+        report_id=str(uuid.uuid4()),
+        analysed_at=datetime.now(UTC),
+        tool_version=TOOL_VERSION,
+        source_sha256=hashlib.sha256(raw_email).hexdigest(),
+        from_address=from_address,
+        display_name=display_name,
+        subject=str(message.get("Subject", "")),
+        score=0,
+        verdict=Verdict.CLEAN,
+        warnings=warnings,
+    )
+
+
+def _parse(raw_email: bytes) -> EmailMessage:
+    """Parse raw bytes into an email message, refusing anything that isn't one.
+
+    Python's parser accepts almost any input, and treats any line like
+    "Note: hello" as a header. So the test for "this is an email" is that at
+    least one standard email header is present.
+    """
+    message = BytesParser(policy=policy.default).parsebytes(raw_email)
+    found_headers = {name.lower() for name in message.keys()}
+    if not found_headers & STANDARD_EMAIL_HEADERS:
+        raise UnparseableEmailError("No standard email headers were found.")
+    assert isinstance(message, EmailMessage)  # guaranteed by policy.default
+    return message
+
+
+def _sender(message: EmailMessage) -> tuple[str, str]:
+    """Return the From address and display name, or empty strings if absent."""
+    from_header = message.get("From")
+    if from_header is None or not from_header.addresses:
+        return "", ""
+    sender = from_header.addresses[0]
+    return sender.addr_spec, sender.display_name

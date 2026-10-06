@@ -1,1 +1,22 @@
+# Secrets: API keys live in .env, never in git (see .env.example)
+.env
+
+# Raw email datasets contain real people's addresses
+samples/
+
+# Saved Triage Reports
+reports/
+
+# Reputation Lookup cache
+.cache/
+
+# Python and tooling
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+dist/
+
+# macOS
 .DS_Store
