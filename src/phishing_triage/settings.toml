@@ -19,6 +19,7 @@ url_shortener = 10
 risky_attachment = 25
 urlhaus_domain_listed = 20
 virustotal_low_detections = 15
+newly_registered_domain = 20
 
 # Protected Brands: names attackers pretend to be. Each line is a brand name,
 # as it would appear in a display name, and the domains genuinely theirs.
@@ -77,3 +78,10 @@ decisive_engines = 3
 # first and aren't capped, so capped URLs usually still have their domain checked.
 [lookups]
 url_cap = 10
+
+# RDAP: a sender or link domain registered fewer than this many days ago
+# gives the newly_registered_domain points. Phishing domains are often only
+# days old. A registry that hides the date gives "unknown age", which never
+# counts as old or new.
+[rdap]
+new_domain_days = 30

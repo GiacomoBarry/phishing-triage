@@ -25,11 +25,13 @@ VALID_SETTINGS = (
     "[points]\nreply_to_mismatch = 20\n"
     "display_name_impersonation = 25\nlookalike_domain = 30\nurl_shortener = 10\n"
     "risky_attachment = 25\nurlhaus_domain_listed = 20\nvirustotal_low_detections = 15\n"
+    "newly_registered_domain = 20\n"
     '[brands]\n"PayPal" = ["paypal.com"]\n'
     '[shorteners]\ndomains = ["bit.ly"]\n'
     '[attachments]\nrisky_extensions = ["exe", ".js"]\n'
     "[virustotal]\ndecisive_engines = 3\n"
     "[lookups]\nurl_cap = 10\n"
+    "[rdap]\nnew_domain_days = 30\n"
 )
 
 
@@ -263,6 +265,11 @@ def test_settings_option_loads_an_edited_settings_file(
             "lookups.url_cap must not be negative",
             id="negative url cap",
         ),
+        pytest.param(
+            VALID_SETTINGS.replace("new_domain_days = 30", "new_domain_days = -1"),
+            "rdap.new_domain_days must not be negative",
+            id="negative new-domain limit",
+        ),
     ],
 )
 def test_broken_settings_file_exits_7_with_a_clear_error(
@@ -345,6 +352,8 @@ def test_without_api_keys_links_are_not_checked_so_the_email_cannot_be_clean(
     assert "Capped:   Raised from clean to suspicious" in out
     assert "URLhaus: URL hxxps://evil[.]example/x -> not checked (no API key)" in out
     assert "VirusTotal: URL hxxps://evil[.]example/x -> not checked (no API key)" in out
+    # RDAP needs no key, but the tests block the network, so it couldn't be reached.
+    assert "RDAP: Domain evil[.]example -> not checked" in out
 
 
 class QuickFakeProvider:

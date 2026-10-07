@@ -34,6 +34,7 @@ from phishing_triage.core import (
     ProviderStopped,
     RuleInput,
     Settings,
+    TriageReport,
     UnparseableEmailError,
     Verdict,
     WaitingForRateLimit,
@@ -235,10 +236,10 @@ def test_incident_note_lists_key_findings_with_evidence() -> None:
         " example.org. (+20 points)\n"
         "\n"
         "Observables (defanged):\n"
-        "- None.\n"
+        "- Sender domain: example[.]org\n"
         "\n"
         "Not Checked:\n"
-        "- Nothing: every Observable was checked by at least one Provider.\n"
+        "- Sender domain: example[.]org: no Provider looks this kind of Observable up yet\n"
     )
 
 
@@ -445,12 +446,17 @@ def test_analysts_own_brand_is_protected_once_added_to_settings() -> None:
 def email_with_body(
     plain: str | None = None,
     html: str | None = None,
-    from_header: str = "Alerts <alerts@example.org>",
+    from_header: str | None = "Alerts <alerts@example.org>",
     attachment: str | None = None,
 ) -> bytes:
-    """An email with a plain-text body, an HTML body, or both, and an optional attachment."""
+    """An email with a plain-text body, an HTML body, or both, and an optional attachment.
+
+    `from_header=None` leaves the From header out, so the email has no Sender
+    Domain: tests about link lookups use that to count only the links.
+    """
     message = EmailMessage()
-    message["From"] = from_header
+    if from_header is not None:
+        message["From"] = from_header
     message["Subject"] = "Account notice"
     if plain is not None:
         message.set_content(plain)
@@ -480,12 +486,13 @@ def test_urls_and_their_domains_become_observables_without_repeats() -> None:
     report = triage(raw, DEFAULT_SETTINGS, providers=[])
 
     assert report.observables == [
+        Observable(ObservableKind.SENDER_DOMAIN, "example.org"),
         Observable(ObservableKind.URL, "https://evil.example/login"),
         Observable(ObservableKind.URL, "https://help.evil.example/faq"),
         Observable(ObservableKind.DOMAIN, "evil.example"),
         Observable(ObservableKind.DOMAIN, "help.evil.example"),
     ]
-    assert report.to_dict()["observables"][0] == {
+    assert report.to_dict()["observables"][1] == {
         "kind": "url",
         "value": "https://evil.example/login",
     }
@@ -545,7 +552,10 @@ def test_urls_in_attachments_are_not_read() -> None:
 def test_a_url_with_an_ip_address_host_gives_no_domain_observable() -> None:
     report = triage(email_with_body(plain="http://192.0.2.10/login"), DEFAULT_SETTINGS, providers=[])
 
-    assert report.observables == [Observable(ObservableKind.URL, "http://192.0.2.10/login")]
+    assert report.observables == [
+        Observable(ObservableKind.SENDER_DOMAIN, "example.org"),
+        Observable(ObservableKind.URL, "http://192.0.2.10/login"),
+    ]
 
 
 @pytest.fixture
@@ -657,6 +667,7 @@ def test_genuine_brand_links_behind_safelinks_give_no_findings() -> None:
 
     assert report.findings == []
     assert report.observables == [
+        Observable(ObservableKind.SENDER_DOMAIN, "example.org"),
         Observable(ObservableKind.URL, "https://account.microsoft.com/"),
         Observable(ObservableKind.DOMAIN, "account.microsoft.com"),
     ]
@@ -669,6 +680,7 @@ def test_incident_note_lists_observables_defanged_and_nothing_clickable() -> Non
 
     assert (
         "Observables (defanged):\n"
+        "- Sender domain: example[.]org\n"
         "- URL: hxxps://bit[.]ly/abc\n"
         "- URL: hxxp://evil[.]example/login.php\n"
         "- Domain: bit[.]ly\n"
@@ -736,7 +748,10 @@ def test_benign_attachment_is_recorded_with_correct_hashes_and_no_finding() -> N
             password_protected=False,
         )
     ]
-    assert report.observables == [Observable(ObservableKind.SHA256, sha256)]
+    assert report.observables == [
+        Observable(ObservableKind.SENDER_DOMAIN, "example.org"),
+        Observable(ObservableKind.SHA256, sha256),
+    ]
     assert report.findings == []
     assert f"- SHA-256: {sha256} (agenda.txt)" in incident_note(report)
 
@@ -848,7 +863,7 @@ def test_an_attached_email_is_hashed_whole_but_not_opened() -> None:
     assert [a.content_type for a in report.attachments] == ["message/rfc822"]
     assert report.attachments[0].size > 0
     # Nothing from inside the attached email is used (ticket 06 decides that).
-    assert [o.kind for o in report.observables] == [ObservableKind.SHA256]
+    assert [o.kind for o in report.observables] == [ObservableKind.SENDER_DOMAIN, ObservableKind.SHA256]
     assert report.findings == []
 
 
@@ -860,7 +875,7 @@ def test_same_file_attached_twice_gives_one_hash_observable() -> None:
     report = triage(raw, DEFAULT_SETTINGS, providers=[])
 
     assert len(report.attachments) == 2
-    assert [o.kind for o in report.observables] == [ObservableKind.SHA256]
+    assert [o.kind for o in report.observables] == [ObservableKind.SENDER_DOMAIN, ObservableKind.SHA256]
     assert "(a.txt, b.txt)" in incident_note(report)
 
 
@@ -897,7 +912,8 @@ def test_attachments_are_never_written_to_disk_or_unpacked(
 # --- Provider framework, URLhaus, and "clean requires evidence" (ticket 09) ---
 
 ALL_KINDS = frozenset(ObservableKind)
-URL_AND_DOMAIN = frozenset({ObservableKind.URL, ObservableKind.DOMAIN})
+# What a typical fake handles: everything but attachment hashes.
+DOMAINS_AND_URLS = frozenset({ObservableKind.SENDER_DOMAIN, ObservableKind.DOMAIN, ObservableKind.URL})
 
 
 class FakeProvider:
@@ -911,7 +927,7 @@ class FakeProvider:
     def __init__(
         self,
         name: str = "FakeIntel",
-        handles: frozenset[ObservableKind] = URL_AND_DOMAIN,
+        handles: frozenset[ObservableKind] = DOMAINS_AND_URLS,
         default: Lookup = Lookup(Outcome.UNKNOWN, "not listed"),
         answers: dict[str, Lookup] | None = None,
         fail: bool = False,
@@ -960,7 +976,7 @@ class UnusedTransport:
         raise AssertionError("nothing should be sent without an API key")
 
 
-LINK_EMAIL = email_with_body(plain="Your invoice: https://evil.example/invoice")
+LINK_EMAIL = email_with_body(plain="Your invoice: https://evil.example/invoice", from_header=None)
 LISTED = Lookup(Outcome.MALICIOUS, "listed as malware_download, currently online")
 
 
@@ -1147,8 +1163,9 @@ def test_the_core_only_ever_asks_providers_to_look_up() -> None:
 
 # --- VirusTotal (ticket 10) ---
 
-VT_EMAIL = email_with_body(plain="Your invoice: https://evil.example/invoice", attachment="notes")
+VT_EMAIL = email_with_body(plain="Your invoice: https://evil.example/invoice", attachment="notes", from_header=None)
 VT_CLEAN = Lookup(Outcome.CLEAN, "0 of 90 engines flag it as malicious")
+VIRUSTOTAL_KINDS = [ObservableKind.URL, ObservableKind.DOMAIN, ObservableKind.SHA256]
 
 
 def virustotal_answering(answers: dict[ObservableKind, Lookup]) -> FakeProvider:
@@ -1177,7 +1194,7 @@ def test_virustotal_at_the_decisive_engine_count_is_decisive(kind: ObservableKin
     assert report.verdict is Verdict.MALICIOUS
 
 
-@pytest.mark.parametrize("kind", list(ObservableKind))
+@pytest.mark.parametrize("kind", VIRUSTOTAL_KINDS)
 def test_virustotal_low_detections_add_points_but_are_not_decisive(kind: ObservableKind) -> None:
     virustotal = virustotal_answering({kind: Lookup(Outcome.SUSPICIOUS, "2 of 90 engines flag it as malicious")})
 
@@ -1213,7 +1230,7 @@ def test_each_observable_with_low_detections_gives_its_own_finding() -> None:
     assert report.verdict is Verdict.SUSPICIOUS
 
 
-@pytest.mark.parametrize("kind", list(ObservableKind))
+@pytest.mark.parametrize("kind", VIRUSTOTAL_KINDS)
 @pytest.mark.parametrize(
     "answer",
     [VT_CLEAN, Lookup(Outcome.UNKNOWN, "never seen by VirusTotal")],
@@ -1265,6 +1282,7 @@ TWO_LINKS_EMAIL = email_with_body(
         "Or here: https://evil.example/alt\n"
     ),
     attachment="notes",
+    from_header=None,
 )
 
 
@@ -1282,7 +1300,7 @@ def test_each_observable_is_looked_up_once_with_domains_first() -> None:
 
 
 def test_urls_over_the_lookup_cap_are_not_checked_and_the_verdict_cannot_be_clean() -> None:
-    raw = email_with_body(plain="https://a.example/1 https://b.example/2 https://c.example/3")
+    raw = email_with_body(plain="https://a.example/1 https://b.example/2 https://c.example/3", from_header=None)
     urlhaus, virustotal = FakeProvider(name="URLhaus"), FakeProvider(name="VirusTotal")
 
     report = triage(raw, replace(DEFAULT_SETTINGS, url_cap=2), providers=[urlhaus, virustotal])
@@ -1323,7 +1341,7 @@ class FakeClock:
         self.time += seconds
 
 
-ONE_DOMAIN_TWO_URLS = email_with_body(plain="https://evil.example/pay https://evil.example/alt")
+ONE_DOMAIN_TWO_URLS = email_with_body(plain="https://evil.example/pay https://evil.example/alt", from_header=None)
 
 
 def test_each_provider_is_paced_to_its_own_rate_limit_by_waiting() -> None:
@@ -1522,3 +1540,111 @@ def test_a_cached_answer_from_the_future_is_not_trusted() -> None:
     triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[second], clock=clock, cache=cache)
 
     assert len(second.received) == 2
+
+
+# --- RDAP: newly registered domains (ticket 13) ---
+
+OCT_7_2026 = 1791331200.0  # 2026-10-07 00:00:00 UTC
+
+
+def registered_on(date: str) -> Lookup:
+    """What the RDAP Provider says about a domain registered on `date`."""
+    return Lookup(Outcome.UNKNOWN, f"registered {date}", {"registered": f"{date}T00:00:00Z"})
+
+
+def rdap_answering(answers: dict[str, Lookup]) -> FakeProvider:
+    return FakeProvider(
+        name="RDAP",
+        handles=frozenset({ObservableKind.DOMAIN, ObservableKind.SENDER_DOMAIN}),
+        default=registered_on("2001-01-01"),
+        answers=answers,
+    )
+
+
+def triage_on_oct_7(raw: bytes, *providers: FakeProvider, settings: Settings = DEFAULT_SETTINGS) -> TriageReport:
+    """Triage `raw` with the clock set to 2026-10-07 00:00 UTC."""
+    clock = FakeClock()
+    clock.time = OCT_7_2026
+    return triage(raw, settings, providers=list(providers), clock=clock)
+
+
+def test_a_newly_registered_link_domain_gives_a_finding() -> None:
+    report = triage_on_oct_7(LINK_EMAIL, rdap_answering({"evil.example": registered_on("2026-09-30")}))
+
+    assert report.findings == [
+        Finding(
+            rule_id="newly_registered_domain",
+            points=20,
+            decisive=False,
+            evidence="Link domain evil[.]example was registered on 2026-09-30, 7 days ago (under 30 days).",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("registered", "fires"),
+    [
+        pytest.param("2026-09-08", True, id="29 days old"),
+        pytest.param("2026-09-07", False, id="exactly 30 days old"),
+        pytest.param("1997-09-15", False, id="decades old"),
+    ],
+)
+def test_only_domains_younger_than_the_limit_give_a_finding(registered: str, fires: bool) -> None:
+    report = triage_on_oct_7(LINK_EMAIL, rdap_answering({"evil.example": registered_on(registered)}))
+
+    assert [f.rule_id for f in report.findings] == (["newly_registered_domain"] if fires else [])
+
+
+def test_unknown_age_never_gives_a_finding_but_is_in_the_report() -> None:
+    unknown = Lookup(Outcome.UNKNOWN, "unknown age: .de has no RDAP service", {"registered": None})
+
+    report = triage_on_oct_7(LINK_EMAIL, rdap_answering({"evil.example": unknown}))
+
+    assert report.findings == []
+    assert [(r.observable.value, r.detail) for r in report.lookups if r.observable.value == "evil.example"] == [
+        ("evil.example", "unknown age: .de has no RDAP service")
+    ]
+
+
+def test_a_newly_registered_sender_domain_gives_a_finding_saying_so() -> None:
+    raw = email_with_body(plain="Hello.", from_header="Billing <billing@fresh.example>")
+
+    report = triage_on_oct_7(raw, rdap_answering({"fresh.example": registered_on("2026-10-06")}))
+
+    assert [f.evidence for f in report.findings] == [
+        "Sender domain fresh[.]example was registered on 2026-10-06, 1 day ago (under 30 days)."
+    ]
+
+
+def test_a_new_domain_used_as_sender_and_link_gives_one_finding() -> None:
+    raw = email_with_body(plain="https://fresh.example/pay", from_header="Billing <billing@fresh.example>")
+
+    report = triage_on_oct_7(raw, rdap_answering({"fresh.example": registered_on("2026-10-01")}))
+
+    assert [f.evidence for f in report.findings] == [
+        "Sender and link domain fresh[.]example was registered on 2026-10-01, 6 days ago (under 30 days)."
+    ]
+
+
+def test_the_new_domain_limit_is_a_setting() -> None:
+    provider = rdap_answering({"evil.example": registered_on("2026-08-08")})  # 60 days before 7 October
+
+    report = triage_on_oct_7(LINK_EMAIL, provider, settings=replace(DEFAULT_SETTINGS, new_domain_days=90))
+
+    assert [f.evidence for f in report.findings] == [
+        "Link domain evil[.]example was registered on 2026-08-08, 60 days ago (under 90 days)."
+    ]
+
+
+def test_a_registration_date_in_the_future_gives_no_finding() -> None:
+    report = triage_on_oct_7(LINK_EMAIL, rdap_answering({"evil.example": registered_on("2026-10-10")}))
+
+    assert report.findings == []
+
+
+def test_a_sender_address_at_an_ip_address_gives_no_sender_domain() -> None:
+    raw = email_with_body(plain="Hello.", from_header="someone@[192.0.2.7]")
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert [o.kind for o in report.observables] == []

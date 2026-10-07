@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from email.message import EmailMessage
 
 from phishing_triage.core.attachments import Attachment
@@ -28,6 +29,8 @@ class RuleInput:
     observables: list[Observable]
     attachments: list[Attachment]
     lookups: list[LookupResult]
+    # When the Triage is happening, from the injected clock, for rules that judge age.
+    now: datetime
 
     def values(self, kind: ObservableKind) -> list[str]:
         """The values of every Observable of one kind, in the order they were found."""

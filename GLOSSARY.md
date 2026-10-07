@@ -30,6 +30,14 @@ _Avoid_: Feed, source, vendor, engine
 One of the many antivirus products or blocklists whose results a Provider such as VirusTotal collects. One Provider can have dozens of Engines behind it, and a Reputation Lookup reports how many of them flag an Observable.
 _Avoid_: Provider, scanner, vendor
 
+**Sender Domain**:
+The domain of an email's From address, as an Observable in its own right. Only RDAP looks it up for now (ADR 0010).
+_Avoid_: From domain (in code), sending domain
+
+**Registration Date**:
+When a domain was first registered, as published by its registry through RDAP. A domain whose registry hides or lacks it has an "unknown age", which never counts as new or old.
+_Avoid_: Creation date, domain age (age is worked out from it)
+
 **Reputation Lookup**:
 Asking a Provider what it already knows about an Observable, without the Provider visiting or scanning it.
 _Avoid_: Scan, submission, check

@@ -26,7 +26,12 @@ KINDS_NEEDING_EVIDENCE = frozenset({ObservableKind.URL, ObservableKind.SHA256})
 
 # The order kinds are looked up in. Domains go first: there are fewer of them,
 # and they still get checked when URLs are over the lookup cap.
-LOOKUP_ORDER = (ObservableKind.DOMAIN, ObservableKind.URL, ObservableKind.SHA256)
+LOOKUP_ORDER = (
+    ObservableKind.SENDER_DOMAIN,
+    ObservableKind.DOMAIN,
+    ObservableKind.URL,
+    ObservableKind.SHA256,
+)
 
 # Lookups are spaced 10% further apart than a Provider's limit strictly needs,
 # so network delays can't squeeze one lookup too many into a minute (ADR 0008).

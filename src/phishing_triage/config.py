@@ -157,4 +157,5 @@ def _build(data: dict[str, Any]) -> Settings:
         ),
         decisive_engines=data["virustotal"]["decisive_engines"],
         url_cap=data["lookups"]["url_cap"],
+        new_domain_days=data["rdap"]["new_domain_days"],
     )

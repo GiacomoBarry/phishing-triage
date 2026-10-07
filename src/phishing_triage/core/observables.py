@@ -13,7 +13,8 @@ class ObservableKind(StrEnum):
     """What sort of artefact an Observable is. More kinds arrive in later tickets."""
 
     URL = "url"
-    DOMAIN = "domain"
+    DOMAIN = "domain"  # A link's domain.
+    SENDER_DOMAIN = "sender_domain"  # The From address's domain.
     SHA256 = "sha256"  # The SHA-256 hash of an attachment.
 
 
@@ -26,8 +27,8 @@ class Observable:
 
 
 def extract_observables(message: EmailMessage, attachments: list[Attachment]) -> list[Observable]:
-    """Return the email's Observables without repeats: every URL, every link domain,
-    then every attachment's SHA-256.
+    """Return the email's Observables without repeats: the sender's domain, every
+    URL, every link domain, then every attachment's SHA-256.
 
     A URL whose host is an IP address gives no domain Observable.
     """
@@ -35,11 +36,28 @@ def extract_observables(message: EmailMessage, attachments: list[Attachment]) ->
     hosts = (host_of(url) for url in urls)
     domains = dict.fromkeys(host for host in hosts if host and not _is_ip_address(host))
     hashes = dict.fromkeys(attachment.sha256 for attachment in attachments)
+    sender_domain = _sender_domain(message)
     return (
-        [Observable(ObservableKind.URL, url) for url in urls]
+        ([Observable(ObservableKind.SENDER_DOMAIN, sender_domain)] if sender_domain else [])
+        + [Observable(ObservableKind.URL, url) for url in urls]
         + [Observable(ObservableKind.DOMAIN, domain) for domain in domains]
         + [Observable(ObservableKind.SHA256, sha256) for sha256 in hashes]
     )
+
+
+def _sender_domain(message: EmailMessage) -> str:
+    """The first From address's domain, lowercased, or "" if there isn't one.
+
+    An address at an IP address (user@[192.0.2.7]) has no domain to look up,
+    just as a link to an IP address gives no domain Observable.
+    """
+    header = message.get("From")
+    if header is None or not header.addresses:
+        return ""
+    domain = str(header.addresses[0].domain).lower().strip(".")
+    if domain.startswith("[") or _is_ip_address(domain):
+        return ""
+    return domain
 
 
 def _is_ip_address(host: str) -> bool:
@@ -54,6 +72,7 @@ def _is_ip_address(host: str) -> bool:
 LABELS = {
     ObservableKind.URL: "URL",
     ObservableKind.DOMAIN: "Domain",
+    ObservableKind.SENDER_DOMAIN: "Sender domain",
     ObservableKind.SHA256: "SHA-256",
 }
 
@@ -65,6 +84,6 @@ def defanged(observable: Observable) -> str:
     """
     if observable.kind is ObservableKind.URL:
         return defang_url(observable.value)
-    if observable.kind is ObservableKind.DOMAIN:
+    if observable.kind in (ObservableKind.DOMAIN, ObservableKind.SENDER_DOMAIN):
         return defang_domain(observable.value)
     return observable.value

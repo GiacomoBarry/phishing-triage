@@ -19,7 +19,7 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Regular expressions and word boundaries**: `\b` in a pattern matches the edge of a word, so `\bApple\b` finds "Apple Support" but not "Applebee's"; `re.escape` stops characters in a brand name being read as pattern syntax (`_names_brand` in `core/rules.py`).
 - **Edit distance**: how many single-letter changes (add, drop, change, swap) turn one word into another; a distance of 1 from a brand name is a common typo trick (`_one_letter_off` in `core/lookalike.py`).
 - **Normalising before comparing**: reducing both sides to a plain form first (lower case, lookalike characters replaced) so different spellings compare equal (`_plain_form` and `_normalise` in `core/lookalike.py`).
-- **Punycode (IDNA)**: how domains with non-Latin letters are written in plain ASCII, as `xn--...`; Python's `idna` codec turns them back (`_decode_punycode` in `core/lookalike.py`).
+- **Punycode (IDNA)**: how domains with non-Latin letters are written in plain ASCII, as `xn--...`; Python's `idna` codec turns them back (`_decode_punycode` in `core/lookalike.py`) and forwards, because registries only accept the ASCII form (`RdapProvider.lookup` in `providers/rdap.py`).
 - **Property**: a method you read like a field, used for a value worked out from other fields (`Settings.protected_domains` in `core/settings.py`).
 - **Parsing HTML with `html.parser`**: the standard library's HTML reader calls our methods for each tag and piece of text, and decodes entities such as `&#46;` for us (`_HtmlPieces` in `core/urls.py`).
 - **Splitting URLs (`urllib.parse`)**: `urlsplit` breaks a URL into scheme, host, path and query, and `parse_qs` reads query parameters, undoing `%`-escapes (`_wrapped_url` in `core/urls.py`).
@@ -56,6 +56,9 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Atomic file writes**: write to a temporary file, then `os.replace` it over the real one in one step, so a crash never leaves a half-written file (`_write` in `cache_file.py`).
 - **Wrapper object (decorator pattern)**: an object with the same shape that changes one behaviour of another, here a cache that never answers but still stores, for `--no-cache` (`WriteOnlyCache` in `cache_file.py`).
 - **Null object**: a stand-in that does nothing, so code needn't check for "no cache" everywhere (`_NoCache` in `core/lookups.py`).
+- **RDAP and bootstrap files**: RDAP is how registries publish domain details as JSON; IANA's bootstrap file says which registry's server answers for each domain ending, so the right one can be asked (`providers/rdap.py`).
+- **Lazy loading**: fetching something only the first time it's needed, then keeping it, here IANA's bootstrap list (`_load_services` in `providers/rdap.py`).
+- **Dates and time spans (`datetime`, `timedelta`)**: `fromisoformat` reads a date like `2012-11-07T04:14:52Z`, and subtracting two dates gives a `timedelta` that can be compared with "30 days" (`newly_registered_domain` in `core/rules.py`).
 - **Callbacks**: passing a function in so the core can report what it's doing without knowing how it's shown; the CLI's function prints to stderr (`on_progress` in `core/triage.py`, `_show_progress` in `cli.py`).
 - **Union types and `type` aliases**: `type Progress = LookupStarted | WaitingForRateLimit` names "one of these two", and `isinstance` tells them apart (`core/lookups.py`, `_show_progress` in `cli.py`).
 - **Stable sorting**: `sorted()` keeps items that compare equal in their original order, so sorting by kind keeps the email's order within each kind (`run_lookups` in `core/lookups.py`).

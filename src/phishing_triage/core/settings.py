@@ -37,6 +37,9 @@ class Settings:
     # The most URLs looked up per Triage. Any more are Not Checked ("over lookup cap").
     url_cap: int
 
+    # A domain registered fewer than this many days ago gives a Finding.
+    new_domain_days: int
+
     @property
     def protected_domains(self) -> tuple[str, ...]:
         """Every brand's domains in one list, without repeats."""

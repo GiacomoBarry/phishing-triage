@@ -51,6 +51,8 @@ def triage(
     given, supplies fresh earlier answers and keeps new ones.
     Raises UnparseableEmailError if the bytes are not an email at all.
     """
+    clock = clock or SystemClock()
+    now = datetime.fromtimestamp(clock.now(), UTC)
     message = _parse(raw_email)
     warnings: list[str] = []
 
@@ -64,13 +66,13 @@ def triage(
         observables,
         providers,
         settings.url_cap,
-        clock or SystemClock(),
+        clock,
         on_progress or (lambda event: None),
         cache,
         settings.decisive_engines,
     )
     rule_input = RuleInput(
-        message=message, observables=observables, attachments=attachments, lookups=lookups
+        message=message, observables=observables, attachments=attachments, lookups=lookups, now=now
     )
 
     findings: list[Finding] = []
@@ -82,7 +84,7 @@ def triage(
 
     return TriageReport(
         report_id=str(uuid.uuid4()),
-        analysed_at=datetime.now(UTC),
+        analysed_at=now,
         tool_version=TOOL_VERSION,
         source_sha256=hashlib.sha256(raw_email).hexdigest(),
         from_address=from_address,

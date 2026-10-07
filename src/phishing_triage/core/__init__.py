@@ -18,7 +18,7 @@ from phishing_triage.core.lookups import (
     WaitingForRateLimit,
 )
 from phishing_triage.core.observables import LABELS, Observable, ObservableKind, defanged
-from phishing_triage.core.providers import URLHAUS, VIRUSTOTAL, Lookup, Outcome, Provider
+from phishing_triage.core.providers import RDAP, URLHAUS, VIRUSTOTAL, Lookup, Outcome, Provider
 from phishing_triage.core.report import TriageReport, Verdict
 from phishing_triage.core.settings import Settings
 from phishing_triage.core.triage import triage
@@ -40,6 +40,7 @@ __all__ = [
     "Progress",
     "ProviderStopped",
     "Provider",
+    "RDAP",
     "Rule",
     "RuleInput",
     "Settings",

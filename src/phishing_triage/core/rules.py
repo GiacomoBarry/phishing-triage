@@ -1,6 +1,7 @@
 """The built-in red-flag rules. Each one returns zero or more Findings."""
 
 import re
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 
 from phishing_triage.core.attachments import (
@@ -13,9 +14,9 @@ from phishing_triage.core.attachments import (
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookalike import imitated_domain, is_genuine
 from phishing_triage.core.observables import LABELS, ObservableKind, defanged
-from phishing_triage.core.providers import URLHAUS, VIRUSTOTAL, Outcome
+from phishing_triage.core.providers import RDAP, URLHAUS, VIRUSTOTAL, Outcome
 from phishing_triage.core.settings import Settings
-from phishing_triage.core.urls import defang_url, host_of
+from phishing_triage.core.urls import defang_domain, defang_url, host_of
 
 REPLY_TO_MISMATCH = "reply_to_mismatch"
 DISPLAY_NAME_IMPERSONATION = "display_name_impersonation"
@@ -25,6 +26,7 @@ RISKY_ATTACHMENT = "risky_attachment"
 KNOWN_MALICIOUS = "known_malicious"
 URLHAUS_DOMAIN_LISTED = "urlhaus_domain_listed"
 VIRUSTOTAL_LOW_DETECTIONS = "virustotal_low_detections"
+NEWLY_REGISTERED_DOMAIN = "newly_registered_domain"
 
 # Extensions a "double extension" hides behind: the part the reader is meant
 # to notice in a name like invoice.pdf.exe.
@@ -258,6 +260,44 @@ def virustotal_low_detections(rule_input: RuleInput, settings: Settings) -> list
     return findings
 
 
+def newly_registered_domain(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find sender or link domains registered fewer than `new_domain_days` ago.
+
+    Phishing domains are often registered days before use. The date comes from
+    RDAP; a domain whose age is unknown never counts as new (or old). A domain
+    that is both the sender's and a link's gives one Finding.
+    """
+    # For each young domain: when it was registered, and where it was seen.
+    young: dict[str, tuple[datetime, list[str]]] = {}
+    for result in rule_input.lookups:
+        registered = result.evidence.get("registered")
+        if result.provider != RDAP or not isinstance(registered, str):
+            continue  # Not RDAP, or unknown age.
+        when = datetime.fromisoformat(registered)
+        age = rule_input.now - when
+        # A date in the future is a registry error, not evidence of a new domain.
+        if timedelta(0) <= age < timedelta(days=settings.new_domain_days):
+            where = "sender" if result.observable.kind is ObservableKind.SENDER_DOMAIN else "link"
+            young.setdefault(result.observable.value, (when, []))[1].append(where)
+
+    findings = []
+    for domain, (when, seen_as) in young.items():
+        days = (rule_input.now - when).days
+        findings.append(
+            Finding(
+                rule_id=NEWLY_REGISTERED_DOMAIN,
+                points=settings.points[NEWLY_REGISTERED_DOMAIN],
+                decisive=False,
+                evidence=(
+                    f"{' and '.join(seen_as).capitalize()} domain {defang_domain(domain)} was registered"
+                    f" on {when:%Y-%m-%d}, {days} {'day' if days == 1 else 'days'} ago"
+                    f" (under {settings.new_domain_days} days)."
+                ),
+            )
+        )
+    return findings
+
+
 def _attachment_red_flags(attachment: Attachment, risky_extensions: tuple[str, ...]) -> list[str]:
     """Each reason an attachment looks dangerous, worded to follow its name."""
     reasons = []
@@ -322,4 +362,5 @@ BUILT_IN_RULES: tuple[Rule, ...] = (
     known_malicious,
     urlhaus_domain_listed,
     virustotal_low_detections,
+    newly_registered_domain,
 )

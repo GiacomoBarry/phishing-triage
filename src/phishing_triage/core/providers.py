@@ -16,6 +16,7 @@ from phishing_triage.core.observables import Observable, ObservableKind
 # Names of Providers that a rule needs to recognise.
 URLHAUS = "URLhaus"
 VIRUSTOTAL = "VirusTotal"
+RDAP = "RDAP"
 
 
 class Outcome(StrEnum):
