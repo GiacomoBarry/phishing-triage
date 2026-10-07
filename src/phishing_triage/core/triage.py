@@ -62,8 +62,12 @@ def triage(
     if not from_address:
         warnings.append("The email has no From address.")
 
+    authentication = read_authentication_results(message)
+    received_hops = read_received_chain(message)
+    claimed_origin = find_claimed_origin(received_hops, settings.trusted_relays)
+
     attachments = extract_attachments(message)
-    observables = extract_observables(message, attachments)
+    observables = extract_observables(message, attachments, claimed_origin.ip if claimed_origin else "")
     lookups = run_lookups(
         observables,
         providers,
@@ -73,14 +77,13 @@ def triage(
         cache,
         settings.decisive_engines,
     )
-    authentication = read_authentication_results(message)
-    received_hops = read_received_chain(message)
     rule_input = RuleInput(
         message=message,
         observables=observables,
         attachments=attachments,
         lookups=lookups,
         authentication=authentication,
+        claimed_origin=claimed_origin,
         now=now,
     )
 
@@ -101,7 +104,7 @@ def triage(
         subject=str(message.get("Subject", "")),
         authentication=authentication,
         received_hops=received_hops,
-        claimed_origin=find_claimed_origin(received_hops, settings.trusted_relays),
+        claimed_origin=claimed_origin,
         observables=observables,
         attachments=attachments,
         lookups=lookups,

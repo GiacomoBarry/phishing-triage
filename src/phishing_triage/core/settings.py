@@ -44,6 +44,10 @@ class Settings:
     # headers are believed genuine, normally the organisation's own gateway.
     trusted_relays: tuple[str, ...]
 
+    # An AbuseIPDB abuse confidence (0-100%) at or above this for the Claimed
+    # Origin gives a Finding.
+    abuse_confidence_threshold: int
+
     @property
     def protected_domains(self) -> tuple[str, ...]:
         """Every brand's domains in one list, without repeats."""

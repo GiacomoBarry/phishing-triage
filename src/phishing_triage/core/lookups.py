@@ -24,9 +24,10 @@ OVER_CAP = "over lookup cap"
 # checked could be the payload. Domains add context but aren't required.
 KINDS_NEEDING_EVIDENCE = frozenset({ObservableKind.URL, ObservableKind.SHA256})
 
-# The order kinds are looked up in. Domains go first: there are fewer of them,
+# The order kinds are looked up in. The Claimed Origin and domains go first: there are fewer of them,
 # and they still get checked when URLs are over the lookup cap.
 LOOKUP_ORDER = (
+    ObservableKind.CLAIMED_ORIGIN,
     ObservableKind.SENDER_DOMAIN,
     ObservableKind.DOMAIN,
     ObservableKind.URL,

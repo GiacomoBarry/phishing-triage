@@ -16,6 +16,7 @@ class ObservableKind(StrEnum):
     DOMAIN = "domain"  # A link's domain.
     SENDER_DOMAIN = "sender_domain"  # The From address's domain.
     SHA256 = "sha256"  # The SHA-256 hash of an attachment.
+    CLAIMED_ORIGIN = "claimed_origin"  # The Claimed Origin's IP address.
 
 
 @dataclass(frozen=True)
@@ -26,11 +27,15 @@ class Observable:
     value: str
 
 
-def extract_observables(message: EmailMessage, attachments: list[Attachment]) -> list[Observable]:
-    """Return the email's Observables without repeats: the sender's domain, every
-    URL, every link domain, then every attachment's SHA-256.
+def extract_observables(
+    message: EmailMessage, attachments: list[Attachment], claimed_origin_ip: str
+) -> list[Observable]:
+    """Return the email's Observables without repeats: the Claimed Origin's IP
+    (if there is one), the sender's domain, every URL, every link domain, then
+    every attachment's SHA-256.
 
-    A URL whose host is an IP address gives no domain Observable.
+    The Claimed Origin is the only IP address that becomes an Observable: a
+    URL whose host is an IP address gives no domain Observable either.
     """
     urls = find_urls(message)
     hosts = (host_of(url) for url in urls)
@@ -38,7 +43,8 @@ def extract_observables(message: EmailMessage, attachments: list[Attachment]) ->
     hashes = dict.fromkeys(attachment.sha256 for attachment in attachments)
     sender_domain = _sender_domain(message)
     return (
-        ([Observable(ObservableKind.SENDER_DOMAIN, sender_domain)] if sender_domain else [])
+        ([Observable(ObservableKind.CLAIMED_ORIGIN, claimed_origin_ip)] if claimed_origin_ip else [])
+        + ([Observable(ObservableKind.SENDER_DOMAIN, sender_domain)] if sender_domain else [])
         + [Observable(ObservableKind.URL, url) for url in urls]
         + [Observable(ObservableKind.DOMAIN, domain) for domain in domains]
         + [Observable(ObservableKind.SHA256, sha256) for sha256 in hashes]
@@ -74,13 +80,14 @@ LABELS = {
     ObservableKind.DOMAIN: "Domain",
     ObservableKind.SENDER_DOMAIN: "Sender domain",
     ObservableKind.SHA256: "SHA-256",
+    ObservableKind.CLAIMED_ORIGIN: "Claimed Origin IP",
 }
 
 
 def defanged(observable: Observable) -> str:
     """The Observable's value made safe to display: URLs and domains can't be clicked.
 
-    A hash isn't clickable, so it is shown as it is.
+    A hash or an IP address isn't clickable, so it is shown as it is.
     """
     if observable.kind is ObservableKind.URL:
         return defang_url(observable.value)

@@ -9,6 +9,7 @@ from phishing_triage.core.attachments import Attachment
 from phishing_triage.core.authentication import AuthenticationResults
 from phishing_triage.core.lookups import LookupResult
 from phishing_triage.core.observables import Observable, ObservableKind
+from phishing_triage.core.received import ClaimedOrigin
 from phishing_triage.core.settings import Settings
 
 
@@ -32,6 +33,8 @@ class RuleInput:
     lookups: list[LookupResult]
     # SPF, DKIM and DMARC as the receiving server recorded them.
     authentication: AuthenticationResults
+    # Where the email appears to have come from, or None if no public IP was found.
+    claimed_origin: ClaimedOrigin | None
     # When the Triage is happening, from the injected clock, for rules that judge age.
     now: datetime
 

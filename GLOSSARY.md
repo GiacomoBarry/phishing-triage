@@ -66,6 +66,10 @@ _Avoid_: Relay (a Hop is the handover, not the server), step
 The IP address an email appears to have been sent from: the public IP a Trusted Relay recorded, or else the earliest public IP in the Received chain. Earlier Hops may be forged, so it is unverified unless a Trusted Relay recorded it (ADR 0011).
 _Avoid_: Source IP, sender IP, origin
 
+**Abuse Confidence**:
+AbuseIPDB's 0–100% estimate, from other people's reports over the last 30 days, that an IP address is abusive. Only the Claimed Origin's is looked up; at or above the threshold setting (75% by default) it adds points (ADR 0012).
+_Avoid_: Abuse score, IP reputation, risk score
+
 **Trusted Relay**:
 A mail server whose Received lines are believed genuine, normally the receiving organisation's own gateway. Listed in settings (`[received] trusted_relays`); subdomains count too.
 _Avoid_: Trusted hop, gateway

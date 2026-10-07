@@ -17,6 +17,7 @@ from phishing_triage.core.observables import Observable, ObservableKind
 URLHAUS = "URLhaus"
 VIRUSTOTAL = "VirusTotal"
 RDAP = "RDAP"
+ABUSEIPDB = "AbuseIPDB"
 
 
 class Outcome(StrEnum):

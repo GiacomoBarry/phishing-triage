@@ -26,6 +26,7 @@ VALID_SETTINGS = (
     "display_name_impersonation = 25\nlookalike_domain = 30\nurl_shortener = 10\n"
     "risky_attachment = 25\nurlhaus_domain_listed = 20\nvirustotal_low_detections = 15\n"
     "newly_registered_domain = 20\ndmarc_fail = 20\nspf_fail = 10\ndkim_fail = 10\n"
+    "abuseipdb_high_confidence = 15\n"
     '[brands]\n"PayPal" = ["paypal.com"]\n'
     '[shorteners]\ndomains = ["bit.ly"]\n'
     '[attachments]\nrisky_extensions = ["exe", ".js"]\n'
@@ -33,6 +34,7 @@ VALID_SETTINGS = (
     "[lookups]\nurl_cap = 10\n"
     "[rdap]\nnew_domain_days = 30\n"
     '[received]\ntrusted_relays = ["MX.Example.com."]\n'
+    "[abuseipdb]\nconfidence_threshold = 75\n"
 )
 
 
@@ -270,6 +272,16 @@ def test_settings_option_loads_an_edited_settings_file(
             VALID_SETTINGS.replace('["MX.Example.com."]', '"mx.example.com"'),
             'received.trusted_relays must be a list of mail server names, like ["mx.example.com"]',
             id="trusted relays not a list",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace("confidence_threshold = 75", "confidence_threshold = 101"),
+            "abuseipdb.confidence_threshold must be from 1 to 100 (a percentage)",
+            id="threshold over 100%",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace("confidence_threshold = 75", "confidence_threshold = 0"),
+            "abuseipdb.confidence_threshold must be from 1 to 100",
+            id="every reported IP would count",
         ),
         pytest.param(
             VALID_SETTINGS.split("[received]")[0],
@@ -561,3 +573,16 @@ def test_readable_view_says_when_nothing_was_recorded(capsys: pytest.CaptureFixt
     out = capsys.readouterr().out
     assert "Authentication (no Authentication-Results header):\n  SPF:   not recorded\n" in out
     assert "Received chain (earliest first):\n  - None.\nClaimed Origin: none found\n" in out
+
+
+def test_without_an_abuseipdb_key_the_claimed_origin_is_not_checked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email_path = tmp_path / "routed.eml"
+    email_path.write_text(ROUTED_EMAIL)
+
+    exit_code = main([str(email_path)])
+
+    out = capsys.readouterr().out
+    assert "AbuseIPDB: Claimed Origin IP 45.33.32.156 -> not checked (no API key)" in out
+    assert exit_code == 0  # An unchecked Claimed Origin alone can't stop a clean Verdict.

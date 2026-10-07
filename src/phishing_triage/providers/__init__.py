@@ -7,6 +7,7 @@ network. The CLI builds the Providers and passes them in to the core.
 from collections.abc import Mapping
 
 from phishing_triage.core import Provider, Settings
+from phishing_triage.providers.abuseipdb import AbuseIPDBProvider
 from phishing_triage.providers.rdap import RdapProvider
 from phishing_triage.providers.transport import UrllibTransport
 from phishing_triage.providers.urlhaus import URLhausProvider
@@ -28,6 +29,7 @@ def build_providers(environ: Mapping[str, str], settings: Settings) -> list[Prov
             decisive_engines=settings.decisive_engines,
         ),
         RdapProvider(transport=transport),  # Needs no key.
+        AbuseIPDBProvider(api_key=_key(environ, "ABUSEIPDB_API_KEY"), transport=transport),
     ]
 
 

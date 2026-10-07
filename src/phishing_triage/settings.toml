@@ -23,6 +23,7 @@ newly_registered_domain = 20
 dmarc_fail = 20
 spf_fail = 10
 dkim_fail = 10
+abuseipdb_high_confidence = 15
 
 # Protected Brands: names attackers pretend to be. Each line is a brand name,
 # as it would appear in a display name, and the domains genuinely theirs.
@@ -100,3 +101,10 @@ new_domain_days = 30
 #   trusted_relays = ["protection.outlook.com"]
 [received]
 trusted_relays = []
+
+# AbuseIPDB: how sure AbuseIPDB must be (0-100%) that the Claimed Origin's IP
+# is abusive before it adds the abuseipdb_high_confidence points. The score
+# comes from other people's reports over the last 30 days. Shared hosting and
+# VPN addresses often sit at middling scores, so a low threshold is noisy.
+[abuseipdb]
+confidence_threshold = 75

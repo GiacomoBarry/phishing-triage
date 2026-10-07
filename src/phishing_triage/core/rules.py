@@ -15,7 +15,7 @@ from phishing_triage.core.authentication import AuthenticationCheck
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookalike import imitated_domain, is_genuine
 from phishing_triage.core.observables import LABELS, ObservableKind, defanged
-from phishing_triage.core.providers import RDAP, URLHAUS, VIRUSTOTAL, Outcome
+from phishing_triage.core.providers import ABUSEIPDB, RDAP, URLHAUS, VIRUSTOTAL, Outcome
 from phishing_triage.core.settings import Settings
 from phishing_triage.core.urls import defang_domain, defang_url, host_of
 
@@ -31,6 +31,7 @@ NEWLY_REGISTERED_DOMAIN = "newly_registered_domain"
 DMARC_FAIL = "dmarc_fail"
 SPF_FAIL = "spf_fail"
 DKIM_FAIL = "dkim_fail"
+ABUSEIPDB_HIGH_CONFIDENCE = "abuseipdb_high_confidence"
 
 # Extensions a "double extension" hides behind: the part the reader is meant
 # to notice in a name like invoice.pdf.exe.
@@ -324,6 +325,41 @@ def dkim_fail(rule_input: RuleInput, settings: Settings) -> list[Finding]:
     return _recorded_fail(DKIM_FAIL, "DKIM", authentication.dkim, authentication.recorded_by, settings)
 
 
+def abuseipdb_high_confidence(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find a Claimed Origin that AbuseIPDB is confident sends abuse.
+
+    The Abuse Confidence comes from AbuseIPDB's evidence, judged here against the
+    threshold setting (ADR 0012). The evidence says whether the Claimed
+    Origin was recorded by a Trusted Relay or could have been forged.
+    """
+    origin = rule_input.claimed_origin
+    if origin is None:
+        return []
+    for result in rule_input.lookups:
+        abuse_confidence = result.evidence.get("abuse_confidence")
+        if result.provider != ABUSEIPDB or not isinstance(abuse_confidence, int):
+            continue
+        if abuse_confidence < settings.abuse_confidence_threshold:
+            return []
+        if origin.verified:
+            trust = f"Trusted Relay {origin.recorded_by} recorded it."
+        else:
+            trust = "It is unverified: the sender could have forged it."
+        return [
+            Finding(
+                rule_id=ABUSEIPDB_HIGH_CONFIDENCE,
+                points=settings.points[ABUSEIPDB_HIGH_CONFIDENCE],
+                decisive=False,
+                evidence=(
+                    f"AbuseIPDB gives the Claimed Origin {origin.ip} an abuse confidence of {abuse_confidence}%"
+                    f" ({result.evidence.get('reports', 0)} reports), at or above the"
+                    f" {settings.abuse_confidence_threshold}% threshold. {trust}"
+                ),
+            )
+        ]
+    return []
+
+
 def _recorded_fail(
     rule_id: str, name: str, check: AuthenticationCheck, recorded_by: str, settings: Settings
 ) -> list[Finding]:
@@ -408,4 +444,5 @@ BUILT_IN_RULES: tuple[Rule, ...] = (
     urlhaus_domain_listed,
     virustotal_low_detections,
     newly_registered_domain,
+    abuseipdb_high_confidence,
 )

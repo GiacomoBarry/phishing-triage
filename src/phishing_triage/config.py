@@ -75,6 +75,8 @@ def _first_problem(data: dict[str, Any], template: dict[str, Any]) -> str | None
         return "verdict.suspicious_from must be lower than verdict.malicious_from"
     if data["virustotal"]["decisive_engines"] < 1:
         return "virustotal.decisive_engines must be at least 1"
+    if not 1 <= data["abuseipdb"]["confidence_threshold"] <= 100:
+        return "abuseipdb.confidence_threshold must be from 1 to 100 (a percentage)"
     return None
 
 
@@ -159,6 +161,7 @@ def _build(data: dict[str, Any]) -> Settings:
         decisive_engines=data["virustotal"]["decisive_engines"],
         url_cap=data["lookups"]["url_cap"],
         new_domain_days=data["rdap"]["new_domain_days"],
+        abuse_confidence_threshold=data["abuseipdb"]["confidence_threshold"],
         trusted_relays=tuple(
             relay.strip(".").lower() for relay in data["received"]["trusted_relays"]
         ),

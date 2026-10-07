@@ -19,6 +19,7 @@ from phishing_triage.config import load_settings
 from phishing_triage.providers.transport import HttpResponse
 from phishing_triage.providers.urlhaus import URLhausProvider
 from phishing_triage.core import (
+    ABUSEIPDB,
     URLHAUS,
     VIRUSTOTAL,
     Attachment,
@@ -1130,6 +1131,11 @@ def test_incident_note_lists_what_was_not_checked_and_why() -> None:
 
 def test_providers_never_receive_recipients_subject_or_body_text() -> None:
     message = EmailMessage()
+    # Received lines name the recipient too; only the Claimed Origin's IP may leave.
+    message["Received"] = (
+        "from mail.evil.example (mail.evil.example [45.33.32.156]) by mx.ourcompany.example"
+        " with ESMTPS id 4A1B2 for <sam.victim@ourcompany.example>; Mon, 05 Oct 2026 10:00:02 +0000"
+    )
     message["From"] = "Payroll <payroll@evil.example>"
     message["To"] = "Sam Victim <sam.victim@ourcompany.example>"
     message["Cc"] = "boss@ourcompany.example"
@@ -1142,6 +1148,7 @@ def test_providers_never_receive_recipients_subject_or_body_text() -> None:
 
     received = [o.value for o in spy.received]
     assert sorted(received) == sorted(o.value for o in report.observables)  # Only attacker-side Observables.
+    assert Observable(ObservableKind.CLAIMED_ORIGIN, "45.33.32.156") in spy.received
     for private in ("ourcompany", "victim", "Sam", "bonus letter", "Confidential", "secret", "Dear"):
         assert not any(private in value for value in received), private
 
@@ -1989,3 +1996,107 @@ def test_a_trusted_hop_naming_a_sender_without_a_readable_ip_stops_the_walk() ->
     )
 
     assert report.claimed_origin == ClaimedOrigin(ip="8.8.8.8", recorded_by="gw.example.com", verified=False)
+
+
+
+# --- AbuseIPDB on the Claimed Origin (ticket 12) ---
+
+
+ONLY_THE_CLAIMED_ORIGIN = frozenset({ObservableKind.CLAIMED_ORIGIN})
+
+# Delivered by the gateway from 45.33.32.156; the bottom header is forged.
+FROM_45_33_32_156 = (
+    "from mail.evil.example (mail.evil.example [45.33.32.156]) by gw.example.com",
+    "from forged.example (forged.example [8.8.4.4]) by mail.evil.example",
+)
+
+
+def abuse_confidence(score: int, reports: int = 40) -> Lookup:
+    """What AbuseIPDB says about a reported IP: the score is in the evidence."""
+    return Lookup(
+        Outcome.SUSPICIOUS,
+        f"abuse confidence {score}% from {reports} reports",
+        {"abuse_confidence": score, "reports": reports},
+    )
+
+
+def abuseipdb_answering(answer: Lookup) -> FakeProvider:
+    return FakeProvider(name=ABUSEIPDB, handles=ONLY_THE_CLAIMED_ORIGIN, default=answer)
+
+
+def triage_from_45_33_32_156(answer: Lookup, settings: Settings = TRUSTING_EXAMPLE_COM) -> TriageReport:
+    raw = email_with_headers(*(f"Received: {line}" for line in FROM_45_33_32_156), "From: a@example.org")
+    return triage(raw, settings, providers=[abuseipdb_answering(answer)])
+
+
+def test_only_the_claimed_origin_ip_is_sent_to_abuseipdb() -> None:
+    abuseipdb = abuseipdb_answering(Lookup(Outcome.UNKNOWN, "no reports"))
+    raw = email_with_body(plain="Pay here: https://203.0.113.9/pay and https://evil.example/x")
+    raw = email_with_headers(*(f"Received: {line}" for line in FROM_45_33_32_156)) + raw
+
+    triage(raw, TRUSTING_EXAMPLE_COM, providers=[abuseipdb])
+
+    assert abuseipdb.received == [Observable(ObservableKind.CLAIMED_ORIGIN, "45.33.32.156")]
+
+
+def test_a_high_abuse_confidence_on_a_verified_origin_gives_a_finding() -> None:
+    report = triage_from_45_33_32_156(abuse_confidence(90))
+
+    assert report.findings == [
+        Finding(
+            rule_id="abuseipdb_high_confidence",
+            points=15,
+            decisive=False,
+            evidence=(
+                "AbuseIPDB gives the Claimed Origin 45.33.32.156 an abuse confidence of 90%"
+                " (40 reports), at or above the 75% threshold."
+                " Trusted Relay gw.example.com recorded it."
+            ),
+        )
+    ]
+
+
+def test_the_finding_says_when_the_claimed_origin_is_unverified() -> None:
+    report = triage_from_45_33_32_156(abuse_confidence(90), settings=DEFAULT_SETTINGS)
+
+    # Without Trusted Relays, the forged bottom hop's IP is the Claimed Origin.
+    assert [finding.evidence for finding in report.findings] == [
+        "AbuseIPDB gives the Claimed Origin 8.8.4.4 an abuse confidence of 90%"
+        " (40 reports), at or above the 75% threshold."
+        " It is unverified: the sender could have forged it."
+    ]
+
+
+@pytest.mark.parametrize(
+    ("answer", "fires"),
+    [
+        pytest.param(abuse_confidence(75), True, id="at the threshold"),
+        pytest.param(abuse_confidence(74), False, id="just below"),
+        pytest.param(abuse_confidence(34), False, id="low"),
+        pytest.param(Lookup(Outcome.UNKNOWN, "no reports", {"abuse_confidence": 0, "reports": 0}), False, id="unknown"),
+    ],
+)
+def test_only_an_abuse_confidence_at_or_above_the_threshold_gives_a_finding(answer: Lookup, fires: bool) -> None:
+    report = triage_from_45_33_32_156(answer)
+
+    assert rule_ids(report.findings) == (["abuseipdb_high_confidence"] if fires else [])
+
+
+def test_the_confidence_threshold_is_a_setting() -> None:
+    settings = replace(TRUSTING_EXAMPLE_COM, abuse_confidence_threshold=30)
+
+    report = triage_from_45_33_32_156(abuse_confidence(34), settings=settings)
+
+    assert rule_ids(report.findings) == ["abuseipdb_high_confidence"]
+
+
+def test_a_claimed_origin_nobody_checked_does_not_stop_a_clean_verdict() -> None:
+    report = triage_from_45_33_32_156(Lookup(Outcome.NOT_CHECKED, "no API key", stop_asking=True))
+
+    assert report.findings == []
+    assert report.verdict is Verdict.CLEAN
+    assert report.cap_reason == ""
+    # It is still listed, so the gap is visible.
+    assert Observable(ObservableKind.CLAIMED_ORIGIN, "45.33.32.156") in [
+        item.observable for item in report.not_checked
+    ]

@@ -41,6 +41,8 @@ Programming concepts this project uses, one line each, with where they appear.
 - **HTTP requests with `urllib`**: building a POST request with a form body, or a GET request, with headers, and reading the status and body (`UrllibTransport` in `providers/transport.py`).
 - **HTTP GET vs POST**: GET asks to *read* something and POST *sends* something; on VirusTotal, GET looks an Observable up and POST submits it for scanning, so the VirusTotal Provider only ever uses GET (`providers/virustotal.py`, ADR 0001).
 - **HTTP status codes**: the number at the start of every answer: 200 found, 404 not found, 401 bad key, 429 too many requests; each one becomes a different outcome (`VirusTotalProvider.lookup` in `providers/virustotal.py`).
+- **Query strings with `urlencode`**: builds the `?ipAddress=…&maxAgeInDays=30` part of a URL, escaping anything unsafe, instead of gluing text together by hand (`check_url` in `providers/abuseipdb.py`).
+- **Separating facts from judgement**: the Provider reports the Abuse Confidence and the rule compares it with the setting, so changing the setting never needs fresh lookups or a new cache key (`AbuseIPDBProvider` and `abuseipdb_high_confidence` in `core/rules.py`, ADR 0012).
 - **base64url**: a way of writing any text using only letters, digits, `-` and `_`, so a whole URL can sit safely inside another URL's path (`_identifier` in `providers/virustotal.py`).
 - **Unix timestamps**: a date stored as seconds since 1 January 1970 UTC, turned into a readable date with `datetime.fromtimestamp` (`_evidence` in `providers/virustotal.py`).
 - **Parsing JSON**: `json.loads` turns a Provider's text answer into Python dicts and lists; anything unexpected becomes Not Checked (`URLhausProvider.lookup` in `providers/urlhaus.py`).
