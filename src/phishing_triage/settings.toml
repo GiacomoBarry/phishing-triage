@@ -13,6 +13,7 @@ malicious_from = 60
 reply_to_mismatch = 20
 display_name_impersonation = 25
 lookalike_domain = 30
+url_shortener = 10
 
 # Protected Brands: names attackers pretend to be. Each line is a brand name,
 # as it would appear in a display name, and the domains genuinely theirs.
@@ -32,3 +33,11 @@ lookalike_domain = 30
 "DHL" = ["dhl.com", "dhl.co.uk", "dhl.de"]
 "HMRC" = ["hmrc.gov.uk"]
 "Royal Mail" = ["royalmail.com", "royalmail.co.uk"]
+
+# URL shorteners: links through these hide their real destination. They are
+# never expanded, because that would mean visiting them. Subdomains count too.
+[shorteners]
+domains = [
+    "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly",
+    "rebrand.ly", "cutt.ly", "shorturl.at", "tiny.cc", "rb.gy", "t.ly", "s.id",
+]

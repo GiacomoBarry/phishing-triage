@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from email.message import EmailMessage
 
+from phishing_triage.core.observables import Observable, ObservableKind
 from phishing_triage.core.settings import Settings
 
 
@@ -17,6 +18,18 @@ class Finding:
     evidence: str
 
 
-# A rule looks at the parsed email and returns zero or more Findings.
+@dataclass(frozen=True)
+class RuleInput:
+    """Everything a rule is given to look at. Lookup results join it in a later ticket."""
+
+    message: EmailMessage
+    observables: list[Observable]
+
+    def values(self, kind: ObservableKind) -> list[str]:
+        """The values of every Observable of one kind, in the order they were found."""
+        return [o.value for o in self.observables if o.kind is kind]
+
+
+# A rule looks at a RuleInput and returns zero or more Findings.
 # Each rule is independent of the others.
-Rule = Callable[[EmailMessage, Settings], list[Finding]]
+Rule = Callable[[RuleInput, Settings], list[Finding]]

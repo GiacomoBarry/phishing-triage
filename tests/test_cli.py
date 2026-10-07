@@ -21,8 +21,9 @@ REPLY_TO_EMAIL = str(FIXTURES / "reply_to_mismatch.eml")
 VALID_SETTINGS = (
     "[verdict]\nsuspicious_from = 30\nmalicious_from = 60\n"
     "[points]\nreply_to_mismatch = 20\n"
-    "display_name_impersonation = 25\nlookalike_domain = 30\n"
+    "display_name_impersonation = 25\nlookalike_domain = 30\nurl_shortener = 10\n"
     '[brands]\n"PayPal" = ["paypal.com"]\n'
+    '[shorteners]\ndomains = ["bit.ly"]\n'
 )
 
 
@@ -207,6 +208,16 @@ def test_settings_option_loads_an_edited_settings_file(
             'brands."PayPal" must be a list of one or more domains',
             id="email address instead of a domain",
         ),
+        pytest.param(
+            VALID_SETTINGS.replace('domains = ["bit.ly"]', 'domains = "bit.ly"'),
+            'shorteners.domains must be a list of domains, like ["example.com"]',
+            id="shortener domains not a list",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace('domains = ["bit.ly"]', 'domains = ["bitly"]'),
+            "shorteners.domains must be a list of domains",
+            id="shortener without a dot",
+        ),
     ],
 )
 def test_broken_settings_file_exits_7_with_a_clear_error(
@@ -226,3 +237,21 @@ def test_broken_settings_file_exits_7_with_a_clear_error(
     assert "Error: settings file" in err
     assert expected_error in err
     assert saved_reports(tmp_path) == []
+
+
+def test_readable_view_has_no_clickable_urls_but_json_keeps_them(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email_path = tmp_path / "links.eml"
+    email_path.write_text(
+        "From: alerts@example.org\nSubject: Links\n\nhttps://bit.ly/abc https://paypa1.com/login\n"
+    )
+
+    main([str(email_path)])
+    readable = capsys.readouterr().out
+    main([str(email_path), "--json"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert "http" not in readable
+    assert "hxxps://paypa1[.]com/login" in readable
+    assert {"kind": "url", "value": "https://paypa1.com/login"} in report["observables"]

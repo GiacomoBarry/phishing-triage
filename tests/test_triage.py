@@ -1,5 +1,7 @@
 """Tests at Seam 1: the core entry point, `triage()`."""
 
+import socket
+import urllib.request
 from dataclasses import replace
 from datetime import UTC, datetime
 from email.message import EmailMessage
@@ -11,6 +13,9 @@ import pytest
 from phishing_triage.config import load_settings
 from phishing_triage.core import (
     Finding,
+    Observable,
+    ObservableKind,
+    RuleInput,
     Settings,
     UnparseableEmailError,
     Verdict,
@@ -173,7 +178,7 @@ def test_score_is_capped_at_100() -> None:
     assert report.verdict is Verdict.MALICIOUS
 
 
-def always_decisive(message: EmailMessage, settings: Settings) -> list[Finding]:
+def always_decisive(rule_input: RuleInput, settings: Settings) -> list[Finding]:
     """A test-only rule standing in for, say, a URL listed on URLhaus."""
     return [
         Finding(
@@ -210,6 +215,9 @@ def test_incident_note_lists_key_findings_with_evidence() -> None:
         "Key Findings:\n"
         "- Reply-To domain attacker.example differs from From domain"
         " example.org. (+20 points)\n"
+        "\n"
+        "Observables (defanged):\n"
+        "- None.\n"
     )
 
 
@@ -240,7 +248,7 @@ def test_any_reply_to_address_on_another_domain_gives_a_finding() -> None:
     ]
 
 
-def twenty_points(message: EmailMessage, settings: Settings) -> list[Finding]:
+def twenty_points(rule_input: RuleInput, settings: Settings) -> list[Finding]:
     """A test-only rule giving a low, non-decisive Score."""
     return [Finding("test_points", 20, decisive=False, evidence="Test-only Finding.")]
 
@@ -408,3 +416,241 @@ def test_analysts_own_brand_is_protected_once_added_to_settings() -> None:
         "display_name_impersonation",
         "lookalike_domain",
     ]
+
+
+# --- URLs: extraction, offline decoding, shorteners and link Lookalikes (ticket 07) ---
+
+
+def email_with_body(
+    plain: str | None = None,
+    html: str | None = None,
+    from_header: str = "Alerts <alerts@example.org>",
+    attachment: str | None = None,
+) -> bytes:
+    """An email with a plain-text body, an HTML body, or both, and an optional attachment."""
+    message = EmailMessage()
+    message["From"] = from_header
+    message["Subject"] = "Account notice"
+    if plain is not None:
+        message.set_content(plain)
+    if html is not None:
+        if plain is None:
+            message.set_content(html, subtype="html")
+        else:
+            message.add_alternative(html, subtype="html")
+    if plain is None and html is None:
+        message.set_content("Hello.")
+    if attachment is not None:
+        message.add_attachment(attachment, filename="notes.txt")
+    return message.as_bytes()
+
+
+def urls_in(raw: bytes) -> list[str]:
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+    return [o.value for o in report.observables if o.kind is ObservableKind.URL]
+
+
+def test_urls_and_their_domains_become_observables_without_repeats() -> None:
+    raw = email_with_body(
+        plain="Log in at https://Evil.EXAMPLE/login, or https://evil.example/login.\n"
+        "Help: https://help.evil.example/faq"
+    )
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert report.observables == [
+        Observable(ObservableKind.URL, "https://evil.example/login"),
+        Observable(ObservableKind.URL, "https://help.evil.example/faq"),
+        Observable(ObservableKind.DOMAIN, "evil.example"),
+        Observable(ObservableKind.DOMAIN, "help.evil.example"),
+    ]
+    assert report.to_dict()["observables"][0] == {
+        "kind": "url",
+        "value": "https://evil.example/login",
+    }
+
+
+SAFELINK = (
+    "https://eur01.safelinks.protection.outlook.com/"
+    "?url=https%3A%2F%2Fevil.example%2Flogin&data=05%7C01&reserved=0"
+)
+
+
+@pytest.mark.parametrize(
+    ("plain", "html", "expected"),
+    [
+        pytest.param("Go to hxxps://evil[.]example/login", None, "https://evil.example/login", id="hxxp and [.]"),
+        pytest.param("Go to hXXp://evil(.)example", None, "http://evil.example", id="hXXp and (.)"),
+        pytest.param("Go to hxxps[:]//evil[.]example/a", None, "https://evil.example/a", id="[:]"),
+        pytest.param("Go to https://evil&#46;example/pay", None, "https://evil.example/pay", id="entity in text"),
+        pytest.param(
+            None, '<a href="https://evil&#46;example/pay">Pay now</a>', "https://evil.example/pay",
+            id="entity in HTML link",
+        ),
+        pytest.param(f"Go to {SAFELINK}", None, "https://evil.example/login", id="SafeLinks"),
+        pytest.param(
+            "Go to https://www.google.com/url?q=https://evil.example/x&sa=D", None, "https://evil.example/x",
+            id="Google redirect",
+        ),
+        pytest.param(
+            "Go to https://eur01.safelinks.protection.outlook.com/?url="
+            "https%3A%2F%2Fwww.google.com%2Furl%3Fq%3Dhttps%253A%252F%252Fevil.example%252Fx",
+            None, "https://evil.example/x", id="wrapper inside a wrapper",
+        ),
+        pytest.param("Go to www.evil.example/login", None, "http://www.evil.example/login", id="www without scheme"),
+    ],
+)
+def test_obfuscated_urls_are_decoded_offline(plain: str | None, html: str | None, expected: str) -> None:
+    assert urls_in(email_with_body(plain=plain, html=html)) == [expected]
+
+
+def test_html_link_targets_and_visible_text_are_both_searched() -> None:
+    raw = email_with_body(
+        html='<p>Hi,</p><a href="https://evil.example/login">https://www.paypal.com/account</a>'
+        '<img src="https://tracker.example/pixel.gif">'
+    )
+
+    # The link target and the visible text differ: both are recorded.
+    # Image addresses (mostly tracking pixels) are not.
+    assert urls_in(raw) == ["https://evil.example/login", "https://www.paypal.com/account"]
+
+
+def test_urls_in_attachments_are_not_read() -> None:
+    raw = email_with_body(plain="See attached.", attachment="https://in-attachment.example/x")
+
+    assert urls_in(raw) == []
+
+
+def test_a_url_with_an_ip_address_host_gives_no_domain_observable() -> None:
+    report = triage(email_with_body(plain="http://192.0.2.10/login"), DEFAULT_SETTINGS, providers=[])
+
+    assert report.observables == [Observable(ObservableKind.URL, "http://192.0.2.10/login")]
+
+
+@pytest.fixture
+def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any attempt to open a network connection fail the test."""
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("network access attempted")
+
+    monkeypatch.setattr(socket, "socket", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+
+
+@pytest.mark.usefixtures("no_network")
+def test_url_handling_never_touches_the_network() -> None:
+    # First prove the guard works: a real request is refused.
+    with pytest.raises(AssertionError, match="network access attempted"):
+        urllib.request.urlopen("http://example.com", timeout=1)
+
+    raw = email_with_body(
+        plain=f"https://bit.ly/abc {SAFELINK} hxxps://paypa1[.]com/login",
+        html='<a href="https://www.google.com/url?q=https://evil.example/x">here</a>',
+    )
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert len(urls_in(raw)) == 4
+    assert rule_ids(report.findings) == ["lookalike_domain", "url_shortener"]
+
+
+def test_shortened_urls_give_one_finding_listing_them_defanged() -> None:
+    raw = email_with_body(plain="https://bit.ly/abc and https://www.tinyurl.com/xyz and https://example.org")
+
+    findings = triage(raw, DEFAULT_SETTINGS, providers=[]).findings
+
+    assert findings == [
+        Finding(
+            rule_id="url_shortener",
+            points=10,
+            decisive=False,
+            evidence=(
+                "Shortened URLs hide their real destinations:"
+                " hxxps://bit[.]ly/abc, hxxps://www[.]tinyurl[.]com/xyz."
+            ),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("https://notbit.ly/x", id="ends with a shortener's name"),
+        pytest.param("https://bit.ly.evil.example/x", id="shortener as a subdomain"),
+    ],
+)
+def test_near_miss_shortener_domains_give_no_finding(url: str) -> None:
+    assert triage(email_with_body(plain=url), DEFAULT_SETTINGS, providers=[]).findings == []
+
+
+def test_lookalike_link_domain_gives_a_finding() -> None:
+    raw = email_with_body(plain="Verify at https://paypa1.com/login")
+
+    findings = triage(raw, DEFAULT_SETTINGS, providers=[]).findings
+
+    assert findings == [
+        Finding(
+            rule_id="lookalike_domain",
+            points=30,
+            decisive=False,
+            evidence=(
+                "Link domain paypa1.com imitates Protected Domain paypal.com:"
+                " it swaps characters to look like paypal."
+            ),
+        )
+    ]
+
+
+def test_sender_and_link_imitating_the_same_brand_count_once() -> None:
+    raw = email_with_body(
+        plain="Verify at https://paypa1.com/login or https://paypal-verify.example/",
+        from_header="Alerts <alerts@paypa1.com>",
+    )
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert [f.evidence for f in report.findings] == [
+        "Sender and link domain paypa1.com imitates Protected Domain paypal.com:"
+        " it swaps characters to look like paypal."
+        " Link domain paypal-verify.example imitates Protected Domain paypal.com:"
+        " it adds words to the name paypal."
+    ]
+    assert report.score == 30
+
+
+def test_links_imitating_two_brands_give_two_findings() -> None:
+    raw = email_with_body(plain="https://paypa1.com/a https://rnicrosoft.com/b")
+
+    findings = triage(raw, DEFAULT_SETTINGS, providers=[]).findings
+
+    assert rule_ids(findings) == ["lookalike_domain", "lookalike_domain"]
+
+
+def test_genuine_brand_links_behind_safelinks_give_no_findings() -> None:
+    raw = email_with_body(
+        plain="https://eur01.safelinks.protection.outlook.com/?url=https%3A%2F%2Faccount.microsoft.com%2F"
+    )
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert report.findings == []
+    assert report.observables == [
+        Observable(ObservableKind.URL, "https://account.microsoft.com/"),
+        Observable(ObservableKind.DOMAIN, "account.microsoft.com"),
+    ]
+
+
+def test_incident_note_lists_observables_defanged_and_nothing_clickable() -> None:
+    raw = email_with_body(plain="https://bit.ly/abc and http://evil.example/login.php")
+
+    note = incident_note(triage(raw, DEFAULT_SETTINGS, providers=[]))
+
+    assert note.endswith(
+        "Observables (defanged):\n"
+        "- URL: hxxps://bit[.]ly/abc\n"
+        "- URL: hxxp://evil[.]example/login.php\n"
+        "- Domain: bit[.]ly\n"
+        "- Domain: evil[.]example\n"
+    )
+    assert "http" not in note

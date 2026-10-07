@@ -21,7 +21,8 @@ flowchart LR
 
     subgraph core["Core: triage() in core/triage.py"]
         direction TB
-        parse["Parse the email"] --> rules["Apply each rule<br/>core/rules.py"]
+        parse["Parse the email"] --> extract["Extract Observables<br/>core/observables.py, core/urls.py"]
+        extract -->|"email + Observables (RuleInput)"| rules["Apply each rule<br/>core/rules.py"]
         rules <-.->|"is this domain a lookalike?"| lookalike["core/lookalike.py"]
         rules -->|Findings| verdict["Score and Verdict<br/>core/verdict.py"]
         verdict --> build["Build the Triage Report"]
@@ -41,24 +42,27 @@ Step by step:
 2. The CLI reads the `.eml` file as bytes. If it can't (missing file, no permission), it stops with exit code 3.
 3. The CLI calls `triage()` in the core.
 4. The core parses the email. If the input has none of the standard email headers (From, To, Subject, Date and so on), it raises `UnparseableEmailError` and the CLI stops with exit code 4.
-5. The core runs each red-flag rule. A rule looks at the email and returns zero or more **Findings**, each with its points, whether it is decisive, and its evidence.
-6. The core adds up the points of the non-decisive Findings into the **Score** (capped at 100) and reaches a **Verdict**: any **Decisive Finding** means malicious, and otherwise the thresholds in the settings decide.
-7. The core builds the **Triage Report**: metadata (report ID, timestamp, tool version, format version, SHA-256 of the email), the sender and subject, the Findings, the Score, the Verdict and any warnings.
-8. The CLI prints either the readable view (including the **Incident Note**) or the JSON, then saves the report as JSON. Printing comes first so the analyst still sees the Verdict if saving fails (exit code 6).
-9. The CLI turns the Verdict into an exit code: 0 clean, 1 suspicious, 2 malicious.
+5. The core extracts the **Observables**: every URL in the plain-text and HTML bodies (not attachments), decoded offline from defanged text, HTML entities and link wrappers such as SafeLinks, then each URL's domain. Nothing is ever fetched ([ADR 0001](adr/0001-reputation-lookups-only.md)).
+6. The core runs each red-flag rule. A rule is given a `RuleInput` (the parsed email and its Observables) and returns zero or more **Findings**, each with its points, whether it is decisive, and its evidence.
+7. The core adds up the points of the non-decisive Findings into the **Score** (capped at 100) and reaches a **Verdict**: any **Decisive Finding** means malicious, and otherwise the thresholds in the settings decide.
+8. The core builds the **Triage Report**: metadata (report ID, timestamp, tool version, format version, SHA-256 of the email), the sender and subject, the Observables, the Findings, the Score, the Verdict and any warnings.
+9. The CLI prints either the readable view (including the **Incident Note**) or the JSON, then saves the report as JSON. Printing comes first so the analyst still sees the Verdict if saving fails (exit code 6).
+10. The CLI turns the Verdict into an exit code: 0 clean, 1 suspicious, 2 malicious.
 
 ## The main parts
 
 | File | What it does |
 |---|---|
 | `core/triage.py` | The one public entry point, `triage()`. It runs the pipeline: parse, apply rules, score, build the report. Extracting **Observables** and making **Reputation Lookups** will slot in before the rules. It takes an optional `rules` argument so tests can pass their own rules. |
-| `core/findings.py` | Defines a **Finding** and the shape of a rule: a function that takes the email and the settings and returns a list of Findings. |
-| `core/rules.py` | The built-in red-flag rules. Each one is independent. So far: Reply-To mismatch, display-name impersonation and sender Lookalike Domain. |
+| `core/findings.py` | Defines a **Finding**, `RuleInput` (what every rule is given: the parsed email and its Observables, with lookup results to come) and the shape of a rule: a function that takes a `RuleInput` and the settings and returns a list of Findings. |
+| `core/observables.py` | Defines an **Observable** (a kind, such as `url` or `domain`, and a value) and `extract_observables()`, which builds the list from the email's URLs. |
+| `core/urls.py` | Finds URLs in the body parts, decodes obfuscated ones as text (defanged forms, HTML entities, SafeLinks and Google redirect wrappers) and defangs them for display. It never fetches anything. |
+| `core/rules.py` | The built-in red-flag rules. Each one is independent. So far: Reply-To mismatch, display-name impersonation, Lookalike Domain (sender and link domains, one Finding per imitated Protected Domain) and URL shortener. |
 | `core/lookalike.py` | Decides whether a domain is a **Lookalike Domain** of a **Protected Domain**, and which trick it uses (swapped characters, one letter off, extra words, the same name on another ending, or non-Latin letters). It knows nothing about emails, so later rules can reuse it for link domains ([ADR 0004](adr/0004-lookalike-detection-with-built-in-rules-of-thumb.md)). |
 | `core/verdict.py` | Adds up the Findings into a Score and reaches a Verdict ([ADR 0002](adr/0002-points-plus-decisive-findings.md)). |
 | `core/report.py` | Defines the **Triage Report** and **Verdict**. This is the one place the report format is defined, including how it becomes JSON. |
-| `core/incident_note.py` | Turns a Triage Report into the **Incident Note** text: a summary line, then the key Findings with their evidence. It only reads the report, so it can't have side effects. Along with `triage()`, it is part of the core's public interface, and tests use it directly. `describe_finding()` is shared with the CLI so a Finding reads the same everywhere. |
-| `core/settings.py` | The shape of the tunable settings: Finding points, Verdict thresholds and the **Protected Brands** with their domains. The values come from the settings file. |
+| `core/incident_note.py` | Turns a Triage Report into the **Incident Note** text: a summary line, the key Findings with their evidence, then every Observable defanged. It only reads the report, so it can't have side effects. Along with `triage()`, it is part of the core's public interface, and tests use it directly. `describe_finding()` is shared with the CLI so a Finding reads the same everywhere. |
+| `core/settings.py` | The shape of the tunable settings: Finding points, Verdict thresholds, the **Protected Brands** with their domains, and URL shortener domains. The values come from the settings file. |
 | `settings.toml` | The default settings, shipped with the tool ([ADR 0003](adr/0003-settings-in-a-packaged-toml-file.md)). |
 | `config.py` | Outside the core: reads a settings file, checks it against the shipped one and builds the `Settings`. |
 | `core/providers.py` | The shape every **Provider** will share. Empty for now, and filled in with the first real Provider. |
@@ -67,4 +71,4 @@ Step by step:
 
 ## What comes next
 
-Later tickets add more rules and the stages before them: extracting Observables, and Reputation Lookups against Providers (passed in from outside, so tests can use fakes).
+Later tickets add more rules, more kinds of Observable (IP addresses, attachment hashes) and Reputation Lookups against Providers (passed in from outside, so tests can use fakes). Lookup results will join `RuleInput`, so rules can use them without changing shape.

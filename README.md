@@ -10,7 +10,7 @@ It is also a learning and portfolio project on the path from service desk to SOC
 
 ## Status
 
-Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. So far there are three rules (a Reply-To on a different domain from the sender, a display name claiming a well-known brand, and a sender domain imitating one) and no Reputation Lookups yet. See `.scratch/phase-1-email-triage/` for the spec and tickets.
+Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. It pulls every link out of the email as an **Observable**, decoding obfuscated ones (defanged text, HTML entities, SafeLinks and Google redirect wrappers) as text, without ever visiting them. So far there are four rules: a Reply-To on a different domain from the sender, a display name claiming a well-known brand, a sender or link domain imitating one, and links through a URL shortener. There are no Reputation Lookups yet. See `.scratch/phase-1-email-triage/` for the spec and tickets.
 
 ## Getting started
 
@@ -30,6 +30,8 @@ uv run phishing-triage path/to/email.eml --json   # print the Triage Report as J
 
 Every run saves the Triage Report to `reports/<report-id>.json`. That folder is git-ignored.
 
+In the readable view and the Incident Note, every URL and link domain is **defanged** (`hxxps://evil[.]com/login`) so nobody can click it by accident. The `--json` output keeps the real values, because it is meant for other programs.
+
 ### How the Verdict is reached
 
 Each red-flag rule that fires adds a Finding worth some points. The points add up to a Score (capped at 100), and thresholds turn the Score into a Verdict: 0–29 clean, 30–59 suspicious, 60 or more malicious. A **Decisive Finding**, such as a confirmed malicious link, makes the Verdict malicious whatever the Score ([ADR 0002](docs/adr/0002-points-plus-decisive-findings.md)).
@@ -44,6 +46,8 @@ uv run phishing-triage path/to/email.eml --settings my-settings.toml
 ```
 
 The `[brands]` section lists the **Protected Brands**: names attackers pretend to be, each with the domains that are genuinely theirs. Add your own organisation the same way, for example `"Acme" = ["acme.co.uk"]`. A display name naming a brand from any other domain is flagged, and so is a sender domain built to look like one of these domains, such as `paypa1.com` or `paypal-secure.xyz`.
+
+The `[shorteners]` section lists URL shortener domains. A link through one is flagged because its real destination is hidden; it is never expanded.
 
 Your copy must keep every setting from the original. A missing or misspelt one stops the run with a clear error rather than being silently ignored ([ADR 0003](docs/adr/0003-settings-in-a-packaged-toml-file.md)).
 

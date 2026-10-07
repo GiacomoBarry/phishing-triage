@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import Any
 
 from phishing_triage.core.findings import Finding
+from phishing_triage.core.observables import Observable
 
 FORMAT_VERSION = 1
 
@@ -37,6 +38,9 @@ class TriageReport:
     from_address: str
     display_name: str
     subject: str
+
+    # What was pulled out of the email: URLs, then link domains.
+    observables: list[Observable]
 
     # The outcome.
     findings: list[Finding]

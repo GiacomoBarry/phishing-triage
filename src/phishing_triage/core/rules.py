@@ -3,22 +3,26 @@
 import re
 from email.message import EmailMessage
 
-from phishing_triage.core.findings import Finding, Rule
+from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookalike import imitated_domain, is_genuine
+from phishing_triage.core.observables import ObservableKind
 from phishing_triage.core.settings import Settings
+from phishing_triage.core.urls import defang_url, host_of
 
 REPLY_TO_MISMATCH = "reply_to_mismatch"
 DISPLAY_NAME_IMPERSONATION = "display_name_impersonation"
 LOOKALIKE_DOMAIN = "lookalike_domain"
+URL_SHORTENER = "url_shortener"
 
 
-def reply_to_mismatch(message: EmailMessage, settings: Settings) -> list[Finding]:
+def reply_to_mismatch(rule_input: RuleInput, settings: Settings) -> list[Finding]:
     """Find Reply-To addresses on a different domain from the From address.
 
     Replies to such an email go somewhere other than the apparent sender,
     a common trick in invoice and payroll fraud. Every Reply-To address is
     checked, because a reply goes to all of them.
     """
+    message = rule_input.message
     from_domains = _domains(message, "From")
     if not from_domains:
         return []
@@ -42,7 +46,7 @@ def reply_to_mismatch(message: EmailMessage, settings: Settings) -> list[Finding
     ]
 
 
-def display_name_impersonation(message: EmailMessage, settings: Settings) -> list[Finding]:
+def display_name_impersonation(rule_input: RuleInput, settings: Settings) -> list[Finding]:
     """Find a display name claiming a Protected Brand, sent from a domain that isn't theirs.
 
     Most mail apps show the display name and hide the address, so
@@ -50,7 +54,7 @@ def display_name_impersonation(message: EmailMessage, settings: Settings) -> lis
     appear as a whole word, so "Applebee's" doesn't count as Apple. Only the
     first brand named gives a Finding, so one display name can't score twice.
     """
-    display_name, domain = _sender_display_name_and_domain(message)
+    display_name, domain = _sender_display_name_and_domain(rule_input.message)
     if not display_name or not domain:
         return []
 
@@ -71,26 +75,73 @@ def display_name_impersonation(message: EmailMessage, settings: Settings) -> lis
     return []
 
 
-def lookalike_domain(message: EmailMessage, settings: Settings) -> list[Finding]:
-    """Find a sender domain built to be mistaken for a Protected Domain."""
-    _, domain = _sender_display_name_and_domain(message)
-    if not domain:
-        return []
+def lookalike_domain(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find sender or link domains built to be mistaken for a Protected Domain.
 
-    lookalike = imitated_domain(domain, settings.protected_domains)
-    if lookalike is None:
-        return []
+    There is one Finding per Protected Domain imitated, so a phish sent from
+    paypa1.com that also links to paypa1.com counts once, not twice.
+    """
+    # Where each domain was seen, e.g. {"paypa1.com": ["sender", "link"]}.
+    places: dict[str, list[str]] = {}
+    _, sender_domain = _sender_display_name_and_domain(rule_input.message)
+    if sender_domain:
+        places[sender_domain] = ["sender"]
+    for link_domain in rule_input.values(ObservableKind.DOMAIN):
+        places.setdefault(link_domain, []).append("link")
+
+    # Evidence sentences for each imitated Protected Domain.
+    sightings: dict[str, list[str]] = {}
+    for domain, seen_as in places.items():
+        lookalike = imitated_domain(domain, settings.protected_domains)
+        if lookalike:
+            where = " and ".join(seen_as).capitalize()
+            sightings.setdefault(lookalike.imitated, []).append(
+                f"{where} domain {domain} imitates Protected Domain"
+                f" {lookalike.imitated}: it {lookalike.technique}."
+            )
+
     return [
         Finding(
             rule_id=LOOKALIKE_DOMAIN,
             points=settings.points[LOOKALIKE_DOMAIN],
             decisive=False,
-            evidence=(
-                f"Sender domain {domain} imitates Protected Domain"
-                f" {lookalike.imitated}: it {lookalike.technique}."
-            ),
+            evidence=" ".join(sentences),
+        )
+        for sentences in sightings.values()
+    ]
+
+
+def url_shortener(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find links through a URL shortener, which hide their real destination.
+
+    The short links are never expanded (ADR 0001): using one is the red flag.
+    """
+    shortened = [
+        url
+        for url in rule_input.values(ObservableKind.URL)
+        if _is_on(host_of(url), settings.shortener_domains)
+    ]
+    if not shortened:
+        return []
+
+    listed = ", ".join(defang_url(url) for url in shortened)
+    if len(shortened) == 1:
+        described = f"Shortened URL hides its real destination: {listed}."
+    else:
+        described = f"Shortened URLs hide their real destinations: {listed}."
+    return [
+        Finding(
+            rule_id=URL_SHORTENER,
+            points=settings.points[URL_SHORTENER],
+            decisive=False,
+            evidence=described,
         )
     ]
+
+
+def _is_on(host: str, domains: tuple[str, ...]) -> bool:
+    """Is `host` one of `domains`, or a subdomain of one?"""
+    return any(host == domain or host.endswith("." + domain) for domain in domains)
 
 
 def _names_brand(display_name: str, brand: str) -> bool:
@@ -122,4 +173,5 @@ BUILT_IN_RULES: tuple[Rule, ...] = (
     reply_to_mismatch,
     display_name_impersonation,
     lookalike_domain,
+    url_shortener,
 )

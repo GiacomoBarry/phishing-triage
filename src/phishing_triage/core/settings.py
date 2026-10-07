@@ -24,6 +24,9 @@ class Settings:
     # with the domains that are genuinely theirs (their Protected Domains).
     brands: Mapping[str, tuple[str, ...]]
 
+    # Domains of URL shorteners, whose links hide their real destination.
+    shortener_domains: tuple[str, ...]
+
     @property
     def protected_domains(self) -> tuple[str, ...]:
         """Every brand's domains in one list, without repeats."""

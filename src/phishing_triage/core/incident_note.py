@@ -1,17 +1,22 @@
 """The Incident Note: a plain-text summary of a Triage Report for a ticket.
 
 Generating it is a pure function: it only reads the report.
-More sections (IOCs, Not Checked, Recommended Actions) arrive in later
-tickets.
+More sections (Not Checked, Recommended Actions) arrive in later tickets.
 """
 
 from phishing_triage.core.findings import Finding
+from phishing_triage.core.observables import ObservableKind
 from phishing_triage.core.report import TriageReport
+from phishing_triage.core.urls import defang_domain, defang_url
+
+# How each kind of Observable is labelled and made unclickable in the Observables section.
+OBSERVABLE_LABELS = {ObservableKind.URL: "URL", ObservableKind.DOMAIN: "Domain"}
+DEFANGERS = {ObservableKind.URL: defang_url, ObservableKind.DOMAIN: defang_domain}
 
 
 def incident_note(report: TriageReport) -> str:
     """Return the Incident Note for a Triage Report, ready to paste into a ticket."""
-    sections = [_summary_line(report), _key_findings(report)]
+    sections = [_summary_line(report), _key_findings(report), _observables(report)]
     return "\n\n".join(sections) + "\n"
 
 
@@ -30,6 +35,21 @@ def _key_findings(report: TriageReport) -> str:
     lines = ["Key Findings:"]
     lines += [f"- {describe_finding(finding)}" for finding in report.findings]
     if not report.findings:
+        lines.append("- None.")
+    return "\n".join(lines)
+
+
+def _observables(report: TriageReport) -> str:
+    """Every Observable, defanged so nobody can click it from the ticket.
+
+    These are not yet IOCs: nothing has been judged malicious until
+    Reputation Lookups arrive.
+    """
+    lines = ["Observables (defanged):"]
+    lines += [
+        f"- {OBSERVABLE_LABELS[o.kind]}: {DEFANGERS[o.kind](o.value)}" for o in report.observables
+    ]
+    if not report.observables:
         lines.append("- None.")
     return "\n".join(lines)
 

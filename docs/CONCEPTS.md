@@ -11,7 +11,7 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Immutable default argument**: `rules=BUILT_IN_RULES` is a tuple, because a mutable default like a list is created once and shared between calls (`triage()` in `core/triage.py`).
 - **TOML and `tomllib`**: a simple settings-file format that Python's standard library can read (`settings.toml`, `config.py`).
 - **Package data (`importlib.resources`)**: reading a non-Python file shipped inside the package, wherever it's installed (`_default_settings_text` in `config.py`).
-- **Validating input against a template**: an edited settings file is checked against the shipped one, so typos are reported, not ignored (`_first_problem` in `config.py`).
+- **Validating input against a template**: an edited settings file is checked against the shipped one, so typos are reported, not ignored, and each value must be the same sort as the shipped default (`_first_problem` and `_fixed_keys_problem` in `config.py`).
 - **Exception chaining (`raise ... from error`)**: keeps the original error attached to the friendlier one, which helps debugging (`load_settings` in `config.py`).
 - **`any()` and generator expressions**: checking or adding up items in one readable line (`score_and_verdict` in `core/verdict.py`).
 - **De-duplicating while keeping order (`dict.fromkeys`)**: a dict keeps its keys in insertion order and can't hold repeats, so it removes duplicates without shuffling them (`_domains` in `core/rules.py`).
@@ -21,6 +21,14 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Normalising before comparing**: reducing both sides to a plain form first (lower case, lookalike characters replaced) so different spellings compare equal (`_plain_form` and `_normalise` in `core/lookalike.py`).
 - **Punycode (IDNA)**: how domains with non-Latin letters are written in plain ASCII, as `xn--...`; Python's `idna` codec turns them back (`_decode_punycode` in `core/lookalike.py`).
 - **Property**: a method you read like a field, used for a value worked out from other fields (`Settings.protected_domains` in `core/settings.py`).
+- **Parsing HTML with `html.parser`**: the standard library's HTML reader calls our methods for each tag and piece of text, and decodes entities such as `&#46;` for us (`_HtmlPieces` in `core/urls.py`).
+- **Splitting URLs (`urllib.parse`)**: `urlsplit` breaks a URL into scheme, host, path and query, and `parse_qs` reads query parameters, undoing `%`-escapes (`_wrapped_url` in `core/urls.py`).
+- **Recursion**: a function that calls itself to walk a tree, here the nested parts of a multipart email (`_body_parts` in `core/urls.py`).
+- **Generators (`yield`)**: a function that hands back items one at a time instead of building a whole list (`_body_parts` in `core/urls.py`).
+- **Bounded loops**: a loop with a fixed maximum, so crafted input can't keep it running for ever (`MAX_UNWRAPS` in `core/urls.py`).
+- **Defanging**: rewriting a URL so it can't be clicked (`hxxps://evil[.]com`) while staying readable (`defang_url` in `core/urls.py`).
+- **Grouping with `dict.setdefault`**: builds a dict of lists in one step, used to collect evidence per imitated domain (`lookalike_domain` in `core/rules.py`).
+- **Monkeypatching**: swapping out a function during one test, here the network functions, so any connection attempt fails the test (`no_network` fixture in `tests/test_triage.py`).
 - **Pure function**: the output depends only on the input and nothing else changes (`incident_note()` in `core/incident_note.py`).
 - **Dataclass**: a class that mainly holds data, with the boilerplate generated for you; `frozen=True` makes it read-only (`TriageReport` in `core/report.py`, `Settings` in `core/settings.py`).
 - **Enum (StrEnum, IntEnum)**: a fixed set of named choices; a `StrEnum` member is also a string, so it turns into JSON easily (`Verdict` in `core/report.py`), and an `IntEnum` member is also a number, so it can be an exit code (`ExitCode` in `cli.py`).

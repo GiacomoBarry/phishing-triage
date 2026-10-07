@@ -60,7 +60,7 @@ def _first_problem(data: dict[str, Any], template: dict[str, Any]) -> str | None
         if section == "brands":
             problem = _brands_problem(values)
         else:
-            problem = _whole_numbers_problem(section, values, template_values)
+            problem = _fixed_keys_problem(section, values, template_values)
         if problem:
             return problem
 
@@ -76,14 +76,22 @@ def _first_problem(data: dict[str, Any], template: dict[str, Any]) -> str | None
     return None
 
 
-def _whole_numbers_problem(
+def _fixed_keys_problem(
     section: str, values: dict[str, Any], template_values: dict[str, Any]
 ) -> str | None:
-    """Check a section that must have exactly the template's keys, each a whole number."""
-    for key in template_values:
+    """Check a section that must have exactly the template's keys.
+
+    Each value must be the same sort as the shipped default: a whole number
+    of 0 or more, or a list of domains.
+    """
+    for key, default in template_values.items():
         if key not in values:
             return f"missing {section}.{key}"
         value = values[key]
+        if isinstance(default, list):
+            if not isinstance(value, list) or not all(_looks_like_a_domain(v) for v in value):
+                return f'{section}.{key} must be a list of domains, like ["example.com"]'
+            continue
         # bool is a kind of int in Python, so rule it out explicitly.
         if not isinstance(value, int) or isinstance(value, bool):
             return f"{section}.{key} must be a whole number"
@@ -126,4 +134,7 @@ def _build(data: dict[str, Any]) -> Settings:
             brand: tuple(domain.strip(".").lower() for domain in domains)
             for brand, domains in data["brands"].items()
         },
+        shortener_domains=tuple(
+            domain.strip(".").lower() for domain in data["shorteners"]["domains"]
+        ),
     )
