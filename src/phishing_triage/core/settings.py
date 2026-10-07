@@ -19,3 +19,13 @@ class Settings:
     # The lowest Score that gives each Verdict. Anything lower is clean.
     suspicious_from: int
     malicious_from: int
+
+    # Protected Brands: each brand name, as it would appear in a display name,
+    # with the domains that are genuinely theirs (their Protected Domains).
+    brands: Mapping[str, tuple[str, ...]]
+
+    @property
+    def protected_domains(self) -> tuple[str, ...]:
+        """Every brand's domains in one list, without repeats."""
+        all_domains = (domain for domains in self.brands.values() for domain in domains)
+        return tuple(dict.fromkeys(all_domains))

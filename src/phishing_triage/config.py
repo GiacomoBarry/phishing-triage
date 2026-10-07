@@ -50,21 +50,19 @@ def _default_settings_text() -> str:
 def _first_problem(data: dict[str, Any], template: dict[str, Any]) -> str | None:
     """Return a description of the first problem in `data`, or None if it's valid."""
     for section, template_values in template.items():
-        values = data.get(section, {})
+        if section not in data:
+            return f"missing section [{section}]"
+        values = data[section]
         if not isinstance(values, dict):
             return f"{section} must be a section, like [{section}]"
-        for key in template_values:
-            if key not in values:
-                return f"missing {section}.{key}"
-            value = values[key]
-            # bool is a kind of int in Python, so rule it out explicitly.
-            if not isinstance(value, int) or isinstance(value, bool):
-                return f"{section}.{key} must be a whole number"
-            if value < 0:
-                return f"{section}.{key} must not be negative"
-        for key in values:
-            if key not in template_values:
-                return f"unknown setting {section}.{key}"
+        # The analyst chooses the brand names, so [brands] can't be checked
+        # key by key against the template like the other sections.
+        if section == "brands":
+            problem = _brands_problem(values)
+        else:
+            problem = _whole_numbers_problem(section, values, template_values)
+        if problem:
+            return problem
 
     for section in data:
         if section not in template:
@@ -78,9 +76,54 @@ def _first_problem(data: dict[str, Any], template: dict[str, Any]) -> str | None
     return None
 
 
+def _whole_numbers_problem(
+    section: str, values: dict[str, Any], template_values: dict[str, Any]
+) -> str | None:
+    """Check a section that must have exactly the template's keys, each a whole number."""
+    for key in template_values:
+        if key not in values:
+            return f"missing {section}.{key}"
+        value = values[key]
+        # bool is a kind of int in Python, so rule it out explicitly.
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"{section}.{key} must be a whole number"
+        if value < 0:
+            return f"{section}.{key} must not be negative"
+    for key in values:
+        if key not in template_values:
+            return f"unknown setting {section}.{key}"
+    return None
+
+
+def _brands_problem(brands: dict[str, Any]) -> str | None:
+    """Check the [brands] section: any brand names, each with a list of domains."""
+    for brand, domains in brands.items():
+        if not brand.strip():
+            return "brand names in [brands] must not be empty"
+        if (
+            not isinstance(domains, list)
+            or not domains
+            or not all(_looks_like_a_domain(domain) for domain in domains)
+        ):
+            return f'brands."{brand}" must be a list of one or more domains, like ["example.com"]'
+    return None
+
+
+def _looks_like_a_domain(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and "." in value.strip(".")
+        and not any(character.isspace() or character == "@" for character in value)
+    )
+
+
 def _build(data: dict[str, Any]) -> Settings:
     return Settings(
         points=data["points"],
         suspicious_from=data["verdict"]["suspicious_from"],
         malicious_from=data["verdict"]["malicious_from"],
+        brands={
+            brand: tuple(domain.strip(".").lower() for domain in domains)
+            for brand, domains in data["brands"].items()
+        },
     )

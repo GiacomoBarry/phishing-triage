@@ -11,3 +11,24 @@ malicious_from = 60
 # Points each Finding adds to the Score. The Score is capped at 100.
 [points]
 reply_to_mismatch = 20
+display_name_impersonation = 25
+lookalike_domain = 30
+
+# Protected Brands: names attackers pretend to be. Each line is a brand name,
+# as it would appear in a display name, and the domains genuinely theirs.
+# Those domains are the Protected Domains that Lookalike Domains are checked
+# against. Add your own organisation the same way, e.g.
+#   "Acme" = ["acme.co.uk"]
+# List the domain the organisation registered (paypal.com, not
+# mail.paypal.com); its subdomains count as genuine automatically.
+# Free webmail (gmail.com, outlook.com, icloud.com) is left out on purpose:
+# anyone can sign up there and call themselves "Google Security".
+[brands]
+"Microsoft" = ["microsoft.com", "microsoftonline.com", "office365.com"]
+"Google" = ["google.com", "google.co.uk"]
+"PayPal" = ["paypal.com", "paypal.co.uk"]
+"Apple" = ["apple.com"]
+"Amazon" = ["amazon.com", "amazon.co.uk"]
+"DHL" = ["dhl.com", "dhl.co.uk", "dhl.de"]
+"HMRC" = ["hmrc.gov.uk"]
+"Royal Mail" = ["royalmail.com", "royalmail.co.uk"]

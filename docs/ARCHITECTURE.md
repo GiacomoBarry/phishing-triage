@@ -22,6 +22,7 @@ flowchart LR
     subgraph core["Core: triage() in core/triage.py"]
         direction TB
         parse["Parse the email"] --> rules["Apply each rule<br/>core/rules.py"]
+        rules <-.->|"is this domain a lookalike?"| lookalike["core/lookalike.py"]
         rules -->|Findings| verdict["Score and Verdict<br/>core/verdict.py"]
         verdict --> build["Build the Triage Report"]
     end
@@ -52,11 +53,12 @@ Step by step:
 |---|---|
 | `core/triage.py` | The one public entry point, `triage()`. It runs the pipeline: parse, apply rules, score, build the report. Extracting **Observables** and making **Reputation Lookups** will slot in before the rules. It takes an optional `rules` argument so tests can pass their own rules. |
 | `core/findings.py` | Defines a **Finding** and the shape of a rule: a function that takes the email and the settings and returns a list of Findings. |
-| `core/rules.py` | The built-in red-flag rules. Each one is independent. So far: Reply-To mismatch. |
+| `core/rules.py` | The built-in red-flag rules. Each one is independent. So far: Reply-To mismatch, display-name impersonation and sender Lookalike Domain. |
+| `core/lookalike.py` | Decides whether a domain is a **Lookalike Domain** of a **Protected Domain**, and which trick it uses (swapped characters, one letter off, extra words, the same name on another ending, or non-Latin letters). It knows nothing about emails, so later rules can reuse it for link domains ([ADR 0004](adr/0004-lookalike-detection-with-built-in-rules-of-thumb.md)). |
 | `core/verdict.py` | Adds up the Findings into a Score and reaches a Verdict ([ADR 0002](adr/0002-points-plus-decisive-findings.md)). |
 | `core/report.py` | Defines the **Triage Report** and **Verdict**. This is the one place the report format is defined, including how it becomes JSON. |
 | `core/incident_note.py` | Turns a Triage Report into the **Incident Note** text: a summary line, then the key Findings with their evidence. It only reads the report, so it can't have side effects. Along with `triage()`, it is part of the core's public interface, and tests use it directly. `describe_finding()` is shared with the CLI so a Finding reads the same everywhere. |
-| `core/settings.py` | The shape of the tunable settings: Finding points and Verdict thresholds. The values come from the settings file. |
+| `core/settings.py` | The shape of the tunable settings: Finding points, Verdict thresholds and the **Protected Brands** with their domains. The values come from the settings file. |
 | `settings.toml` | The default settings, shipped with the tool ([ADR 0003](adr/0003-settings-in-a-packaged-toml-file.md)). |
 | `config.py` | Outside the core: reads a settings file, checks it against the shipped one and builds the `Settings`. |
 | `core/providers.py` | The shape every **Provider** will share. Empty for now, and filled in with the first real Provider. |

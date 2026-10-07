@@ -10,7 +10,7 @@ It is also a learning and portfolio project on the path from service desk to SOC
 
 ## Status
 
-Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. So far there is one rule (a Reply-To on a different domain from the sender) and no Reputation Lookups yet. See `.scratch/phase-1-email-triage/` for the spec and tickets.
+Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. So far there are three rules (a Reply-To on a different domain from the sender, a display name claiming a well-known brand, and a sender domain imitating one) and no Reputation Lookups yet. See `.scratch/phase-1-email-triage/` for the spec and tickets.
 
 ## Getting started
 
@@ -42,6 +42,8 @@ The points and thresholds live in [`src/phishing_triage/settings.toml`](src/phis
 cp src/phishing_triage/settings.toml my-settings.toml
 uv run phishing-triage path/to/email.eml --settings my-settings.toml
 ```
+
+The `[brands]` section lists the **Protected Brands**: names attackers pretend to be, each with the domains that are genuinely theirs. Add your own organisation the same way, for example `"Acme" = ["acme.co.uk"]`. A display name naming a brand from any other domain is flagged, and so is a sender domain built to look like one of these domains, such as `paypa1.com` or `paypal-secure.xyz`.
 
 Your copy must keep every setting from the original. A missing or misspelt one stops the run with a clear error rather than being silently ignored ([ADR 0003](docs/adr/0003-settings-in-a-packaged-toml-file.md)).
 

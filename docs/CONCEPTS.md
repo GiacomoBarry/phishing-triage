@@ -11,11 +11,16 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Immutable default argument**: `rules=BUILT_IN_RULES` is a tuple, because a mutable default like a list is created once and shared between calls (`triage()` in `core/triage.py`).
 - **TOML and `tomllib`**: a simple settings-file format that Python's standard library can read (`settings.toml`, `config.py`).
 - **Package data (`importlib.resources`)**: reading a non-Python file shipped inside the package, wherever it's installed (`_default_settings_text` in `config.py`).
-- **Validating input against a template**: an edited settings file is checked against the shipped one, so typos are reported, not ignored (`_find_problem` in `config.py`).
+- **Validating input against a template**: an edited settings file is checked against the shipped one, so typos are reported, not ignored (`_first_problem` in `config.py`).
 - **Exception chaining (`raise ... from error`)**: keeps the original error attached to the friendlier one, which helps debugging (`load_settings` in `config.py`).
 - **`any()` and generator expressions**: checking or adding up items in one readable line (`score_and_verdict` in `core/verdict.py`).
 - **De-duplicating while keeping order (`dict.fromkeys`)**: a dict keeps its keys in insertion order and can't hold repeats, so it removes duplicates without shuffling them (`_domains` in `core/rules.py`).
 - **`dataclasses.replace`**: copies a frozen dataclass with a few fields changed, used to make test settings (`settings_with_reply_to_points` in `tests/test_triage.py`).
+- **Regular expressions and word boundaries**: `\b` in a pattern matches the edge of a word, so `\bApple\b` finds "Apple Support" but not "Applebee's"; `re.escape` stops characters in a brand name being read as pattern syntax (`_names_brand` in `core/rules.py`).
+- **Edit distance**: how many single-letter changes (add, drop, change, swap) turn one word into another; a distance of 1 from a brand name is a common typo trick (`_one_letter_off` in `core/lookalike.py`).
+- **Normalising before comparing**: reducing both sides to a plain form first (lower case, lookalike characters replaced) so different spellings compare equal (`_plain_form` and `_normalise` in `core/lookalike.py`).
+- **Punycode (IDNA)**: how domains with non-Latin letters are written in plain ASCII, as `xn--...`; Python's `idna` codec turns them back (`_decode_punycode` in `core/lookalike.py`).
+- **Property**: a method you read like a field, used for a value worked out from other fields (`Settings.protected_domains` in `core/settings.py`).
 - **Pure function**: the output depends only on the input and nothing else changes (`incident_note()` in `core/incident_note.py`).
 - **Dataclass**: a class that mainly holds data, with the boilerplate generated for you; `frozen=True` makes it read-only (`TriageReport` in `core/report.py`, `Settings` in `core/settings.py`).
 - **Enum (StrEnum, IntEnum)**: a fixed set of named choices; a `StrEnum` member is also a string, so it turns into JSON easily (`Verdict` in `core/report.py`), and an `IntEnum` member is also a number, so it can be an exit code (`ExitCode` in `cli.py`).

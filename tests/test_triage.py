@@ -143,7 +143,7 @@ def test_no_reply_to_finding_when_replies_go_to_the_sender_domain(
 
 
 def settings_with_reply_to_points(points: int) -> Settings:
-    return replace(DEFAULT_SETTINGS, points={"reply_to_mismatch": points})
+    return replace(DEFAULT_SETTINGS, points={**DEFAULT_SETTINGS.points, "reply_to_mismatch": points})
 
 
 @pytest.mark.parametrize(
@@ -269,4 +269,142 @@ def test_reply_to_finding_names_every_other_domain_once() -> None:
     assert [finding.evidence for finding in report.findings] == [
         "Reply-To domains first.example, second.example differ"
         " from From domain example.org."
+    ]
+
+
+# --- Display-name impersonation and sender Lookalike Domains (ticket 04) ---
+
+
+def findings_for_sender(from_header: str, settings: Settings = DEFAULT_SETTINGS) -> list[Finding]:
+    """Triage a minimal email from the given sender and return its Findings."""
+    raw = email_with_headers(f"From: {from_header}", "Subject: Account notice")
+    return triage(raw, settings, providers=[]).findings
+
+
+def rule_ids(findings: list[Finding]) -> list[str]:
+    return [finding.rule_id for finding in findings]
+
+
+@pytest.mark.parametrize(
+    "from_header",
+    [
+        pytest.param("PayPal <service@paypal.com>", id="brand's own domain"),
+        pytest.param("PayPal <service@PayPal.co.uk>", id="brand's other domain, other case"),
+        pytest.param("PayPal Alerts <service@mail.paypal.com>", id="brand's subdomain"),
+        pytest.param("HMRC <noreply@notify.hmrc.gov.uk>", id="government subdomain"),
+        pytest.param("Royal Mail <tracking@royalmail.com>", id="two-word brand"),
+    ],
+)
+def test_genuine_brand_senders_give_no_findings(from_header: str) -> None:
+    assert findings_for_sender(from_header) == []
+
+
+def test_display_name_naming_a_brand_from_another_domain_gives_a_finding() -> None:
+    findings = findings_for_sender("PayPal Service <alerts@random-mailer.example>")
+
+    assert findings == [
+        Finding(
+            rule_id="display_name_impersonation",
+            points=25,
+            decisive=False,
+            evidence=(
+                'Display name "PayPal Service" names PayPal, but the sending domain'
+                " random-mailer.example is not one of PayPal's domains"
+                " (paypal.com, paypal.co.uk)."
+            ),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "from_header",
+    [
+        pytest.param("Royal Mail Delivery <parcel@tracking-update.example>", id="two-word brand"),
+        pytest.param("microsoft account team <it@helpdesk.example>", id="lower case"),
+        pytest.param('"service@paypal.com" <x@evil.example>', id="address as display name"),
+        pytest.param("Google Security <google.security@gmail.com>", id="free webmail"),
+    ],
+)
+def test_brand_in_display_name_is_matched_flexibly(from_header: str) -> None:
+    assert rule_ids(findings_for_sender(from_header)) == ["display_name_impersonation"]
+
+
+@pytest.mark.parametrize(
+    "from_header",
+    [
+        pytest.param("Applebee's <offers@applebees.example>", id="brand inside a longer word"),
+        pytest.param("Jo Bloggs <jo@example.org>", id="no brand"),
+        pytest.param("<jo@example.org>", id="no display name"),
+    ],
+)
+def test_no_impersonation_finding_without_a_whole_brand_name(from_header: str) -> None:
+    assert findings_for_sender(from_header) == []
+
+
+@pytest.mark.parametrize(
+    ("sender_domain", "imitated", "technique"),
+    [
+        pytest.param("paypa1.com", "paypal.com", "swaps characters to look like paypal", id="digit for letter"),
+        pytest.param("rnicrosoft.com", "microsoft.com", "swaps characters to look like microsoft", id="rn for m"),
+        pytest.param("g00gle.co.uk", "google.com", "swaps characters to look like google", id="zeros for o"),
+        pytest.param("paypall.com", "paypal.com", "is one letter off from paypal", id="letter added"),
+        pytest.param("amazn.com", "amazon.com", "is one letter off from amazon", id="letter dropped"),
+        pytest.param("micrasoft.com", "microsoft.com", "is one letter off from microsoft", id="letter changed"),
+        pytest.param("paypla.com", "paypal.com", "is one letter off from paypal", id="letters swapped"),
+        pytest.param("paypal-secure.xyz", "paypal.com", "adds words to the name paypal", id="extra word after"),
+        pytest.param("secure-dhl.com", "dhl.com", "adds words to the name dhl", id="extra word before"),
+        pytest.param("paypa1-secure.xyz", "paypal.com", "swaps characters to look like paypal", id="swap plus extra word"),
+        pytest.param("paypal.com.evil.example", "paypal.com", "reuses the name paypal", id="brand as subdomain"),
+        pytest.param("paypal.xyz", "paypal.com", "reuses the name paypal", id="different ending"),
+        pytest.param(
+            "xn--pypal-4ve.com", "paypal.com", "uses non-Latin letters (p\u0430ypal) to look like paypal",
+            id="Cyrillic letter",
+        ),
+    ],
+)
+def test_sender_lookalike_domains_give_a_finding(
+    sender_domain: str, imitated: str, technique: str
+) -> None:
+    findings = findings_for_sender(f"<alerts@{sender_domain}>")
+
+    assert findings == [
+        Finding(
+            rule_id="lookalike_domain",
+            points=30,
+            decisive=False,
+            evidence=f"Sender domain {sender_domain} imitates Protected Domain {imitated}: it {technique}.",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "sender_domain",
+    [
+        pytest.param("pineapple.example", id="brand inside a longer word"),
+        pytest.param("dhs.gov", id="short brand one letter off"),
+        pytest.param("example.org", id="unrelated"),
+        pytest.param("paypalsecure.example", id="joined without a hyphen (known gap)"),
+    ],
+)
+def test_near_misses_are_not_lookalikes(sender_domain: str) -> None:
+    assert findings_for_sender(f"<alerts@{sender_domain}>") == []
+
+
+def test_impersonation_and_lookalike_together_add_up_to_suspicious() -> None:
+    raw = email_with_headers("From: PayPal <service@paypa1.com>", "Subject: Account notice")
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert rule_ids(report.findings) == ["display_name_impersonation", "lookalike_domain"]
+    assert report.score == 55
+    assert report.verdict is Verdict.SUSPICIOUS
+
+
+def test_analysts_own_brand_is_protected_once_added_to_settings() -> None:
+    settings = replace(DEFAULT_SETTINGS, brands={"Acme": ("acme.co.uk",)})
+
+    assert findings_for_sender("Acme IT <it@acme.co.uk>", settings) == []
+    assert rule_ids(findings_for_sender("Acme IT <it@acrne.co.uk>", settings)) == [
+        "display_name_impersonation",
+        "lookalike_domain",
     ]

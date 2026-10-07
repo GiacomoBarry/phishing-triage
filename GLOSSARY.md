@@ -46,8 +46,12 @@ _Avoid_: Source IP, sender IP, origin
 A mail server whose Received lines are believed genuine, normally the receiving organisation's own gateway.
 _Avoid_: Trusted hop, gateway
 
+**Protected Brand**:
+An organisation attackers are expected to pretend to be, listed with the Protected Domains that are genuinely its own. Its name in a display name, sent from any other domain, is impersonation.
+_Avoid_: Brand, watched brand
+
 **Protected Domain**:
-A domain that attackers are expected to imitate, such as the organisation's own domain or a commonly impersonated brand.
+A domain that attackers are expected to imitate, such as the organisation's own domain or a commonly impersonated brand's. Its subdomains are treated as genuine too.
 _Avoid_: Brand list, watched domain
 
 **Lookalike Domain**:

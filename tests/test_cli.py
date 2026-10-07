@@ -17,15 +17,20 @@ CLEAN_EMAIL = str(FIXTURES / "clean_newsletter.eml")
 REPLY_TO_EMAIL = str(FIXTURES / "reply_to_mismatch.eml")
 
 
+# A complete, valid settings file, as an analyst's edited copy might look.
+VALID_SETTINGS = (
+    "[verdict]\nsuspicious_from = 30\nmalicious_from = 60\n"
+    "[points]\nreply_to_mismatch = 20\n"
+    "display_name_impersonation = 25\nlookalike_domain = 30\n"
+    '[brands]\n"PayPal" = ["paypal.com"]\n'
+)
+
+
 def write_settings(tmp_path: Path, reply_to_points: int) -> str:
     """Write an edited settings file, as an analyst tuning the tool would."""
     path = tmp_path / "my-settings.toml"
     path.write_text(
-        "[verdict]\n"
-        "suspicious_from = 30\n"
-        "malicious_from = 60\n"
-        "[points]\n"
-        f"reply_to_mismatch = {reply_to_points}\n"
+        VALID_SETTINGS.replace("reply_to_mismatch = 20", f"reply_to_mismatch = {reply_to_points}")
     )
     return str(path)
 
@@ -147,12 +152,6 @@ def test_settings_option_loads_an_edited_settings_file(
     assert main([REPLY_TO_EMAIL, "--settings", settings_path]) == exit_code
 
 
-VALID_SETTINGS = (
-    "[verdict]\nsuspicious_from = 30\nmalicious_from = 60\n"
-    "[points]\nreply_to_mismatch = 20\n"
-)
-
-
 @pytest.mark.parametrize(
     ("settings_text", "expected_error"),
     [
@@ -164,7 +163,7 @@ VALID_SETTINGS = (
             id="missing key",
         ),
         pytest.param(
-            VALID_SETTINGS + "reply_to_mismach = 5\n",
+            VALID_SETTINGS.replace("[brands]", "reply_to_mismach = 5\n[brands]"),
             "unknown setting points.reply_to_mismach",
             id="misspelt key",
         ),
@@ -187,6 +186,26 @@ VALID_SETTINGS = (
             VALID_SETTINGS.replace("suspicious_from = 30", "suspicious_from = 0"),
             "verdict.suspicious_from must be at least 1",
             id="nothing could be clean",
+        ),
+        pytest.param(
+            VALID_SETTINGS.split("[brands]")[0],
+            "missing section [brands]",
+            id="missing brands section",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace('["paypal.com"]', '"paypal.com"'),
+            'brands."PayPal" must be a list of one or more domains',
+            id="brand domains not a list",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace('["paypal.com"]', "[]"),
+            'brands."PayPal" must be a list of one or more domains',
+            id="brand with no domains",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace('["paypal.com"]', '["support@paypal.com"]'),
+            'brands."PayPal" must be a list of one or more domains',
+            id="email address instead of a domain",
         ),
     ],
 )

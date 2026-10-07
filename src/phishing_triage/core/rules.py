@@ -1,11 +1,15 @@
 """The built-in red-flag rules. Each one returns zero or more Findings."""
 
+import re
 from email.message import EmailMessage
 
 from phishing_triage.core.findings import Finding, Rule
+from phishing_triage.core.lookalike import imitated_domain, is_genuine
 from phishing_triage.core.settings import Settings
 
 REPLY_TO_MISMATCH = "reply_to_mismatch"
+DISPLAY_NAME_IMPERSONATION = "display_name_impersonation"
+LOOKALIKE_DOMAIN = "lookalike_domain"
 
 
 def reply_to_mismatch(message: EmailMessage, settings: Settings) -> list[Finding]:
@@ -38,6 +42,73 @@ def reply_to_mismatch(message: EmailMessage, settings: Settings) -> list[Finding
     ]
 
 
+def display_name_impersonation(message: EmailMessage, settings: Settings) -> list[Finding]:
+    """Find a display name claiming a Protected Brand, sent from a domain that isn't theirs.
+
+    Most mail apps show the display name and hide the address, so
+    "PayPal Service <alerts@random.example>" reads as PayPal. The brand must
+    appear as a whole word, so "Applebee's" doesn't count as Apple. Only the
+    first brand named gives a Finding, so one display name can't score twice.
+    """
+    display_name, domain = _sender_display_name_and_domain(message)
+    if not display_name or not domain:
+        return []
+
+    for brand, brand_domains in settings.brands.items():
+        if _names_brand(display_name, brand) and not is_genuine(domain, brand_domains):
+            return [
+                Finding(
+                    rule_id=DISPLAY_NAME_IMPERSONATION,
+                    points=settings.points[DISPLAY_NAME_IMPERSONATION],
+                    decisive=False,
+                    evidence=(
+                        f'Display name "{display_name}" names {brand}, but the'
+                        f" sending domain {domain} is not one of {brand}'s domains"
+                        f" ({', '.join(brand_domains)})."
+                    ),
+                )
+            ]
+    return []
+
+
+def lookalike_domain(message: EmailMessage, settings: Settings) -> list[Finding]:
+    """Find a sender domain built to be mistaken for a Protected Domain."""
+    _, domain = _sender_display_name_and_domain(message)
+    if not domain:
+        return []
+
+    lookalike = imitated_domain(domain, settings.protected_domains)
+    if lookalike is None:
+        return []
+    return [
+        Finding(
+            rule_id=LOOKALIKE_DOMAIN,
+            points=settings.points[LOOKALIKE_DOMAIN],
+            decisive=False,
+            evidence=(
+                f"Sender domain {domain} imitates Protected Domain"
+                f" {lookalike.imitated}: it {lookalike.technique}."
+            ),
+        )
+    ]
+
+
+def _names_brand(display_name: str, brand: str) -> bool:
+    """Does the display name contain the brand as a whole word, ignoring case?"""
+    # \b is a word boundary, so "Apple" matches "Apple Support" and
+    # "support@apple.com" but not "Applebee's".
+    return re.search(rf"\b{re.escape(brand)}\b", display_name, re.IGNORECASE) is not None
+
+
+def _sender_display_name_and_domain(message: EmailMessage) -> tuple[str, str]:
+    """Return the first From address's display name and lowercased domain."""
+    header = message.get("From")
+    if header is None or not header.addresses:
+        return "", ""
+    sender = header.addresses[0]
+    return sender.display_name, str(sender.domain).lower()
+
+
 def _domains(message: EmailMessage, header_name: str) -> list[str]:
     """Return the lowercased domains of a header's addresses, without repeats."""
     header = message.get(header_name)
@@ -47,4 +118,8 @@ def _domains(message: EmailMessage, header_name: str) -> list[str]:
     return list(dict.fromkeys(domain for domain in domains if domain))
 
 
-BUILT_IN_RULES: tuple[Rule, ...] = (reply_to_mismatch,)
+BUILT_IN_RULES: tuple[Rule, ...] = (
+    reply_to_mismatch,
+    display_name_impersonation,
+    lookalike_domain,
+)
