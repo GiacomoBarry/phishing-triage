@@ -1,1 +1,24 @@
-{"query_status":"ok","id":"3071545","urlhaus_reference":"https://urlhaus.abuse.ch/url/3071545/","url":"http://198.51.100.7:44812/i","url_status":"online","host":"198.51.100.7","date_added":"2026-10-06 21:14:08 UTC","last_online":null,"threat":"malware_download","blacklists":{"spamhaus_dbl":"not listed","surbl":"not listed"},"reporter":"example_reporter","larted":"true","takedown_time_seconds":null,"tags":["elf","mozi"],"payloads":[]}
+{
+    "query_status": "ok",
+    "id": "3944375",
+    "urlhaus_reference": "https:\/\/urlhaus.abuse.ch\/url\/3944375\/",
+    "url": "https:\/\/hardly-signatures-loc-surf.trycloudflare.com\/download\/WindowsUpdate.ps1",
+    "url_status": "offline",
+    "host": "hardly-signatures-loc-surf.trycloudflare.com",
+    "date_added": "2026-10-07 18:02:11 UTC",
+    "last_online": null,
+    "threat": "malware_download",
+    "blacklists": {
+        "spamhaus_dbl": "phishing_domain",
+        "surbl": "not listed"
+    },
+    "reporter": "abuse_ch",
+    "larted": "false",
+    "takedown_time_seconds": null,
+    "tags": [
+        "ascii",
+        "powershell",
+        "ps1"
+    ],
+    "payloads": null
+}

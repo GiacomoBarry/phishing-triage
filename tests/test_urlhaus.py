@@ -15,8 +15,12 @@ from phishing_triage.providers.urlhaus import LOOKUP_ENDPOINTS, URLhausProvider
 
 FIXTURES = Path(__file__).parent / "fixtures" / "urlhaus"
 
-A_URL = Observable(ObservableKind.URL, "http://198.51.100.7:44812/i")
-A_DOMAIN = Observable(ObservableKind.DOMAIN, "198.51.100.7")
+# The URL and domain in the captured responses.
+A_URL = Observable(
+    ObservableKind.URL,
+    "https://hardly-signatures-loc-surf.trycloudflare.com/download/WindowsUpdate.ps1",
+)
+A_DOMAIN = Observable(ObservableKind.DOMAIN, "hardly-signatures-loc-surf.trycloudflare.com")
 
 
 class FakeTransport:
