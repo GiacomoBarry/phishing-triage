@@ -58,13 +58,21 @@ _Avoid_: Clean, benign, no result
 The outcome for an Observable whose Reputation Lookup never happened, for example because a key was missing or the Provider failed.
 _Avoid_: Unknown, skipped, error
 
+**Hop**:
+One mail server passing an email on, as recorded in one Received header: who sent it (the name it gave and the IP seen), which server received it, and when. The Received chain is the email's hops, earliest first.
+_Avoid_: Relay (a Hop is the handover, not the server), step
+
 **Claimed Origin**:
-The earliest public IP address in an email's Received chain. Earlier hops may be forged, so it is unverified unless a Trusted Relay recorded it.
+The IP address an email appears to have been sent from: the public IP a Trusted Relay recorded, or else the earliest public IP in the Received chain. Earlier Hops may be forged, so it is unverified unless a Trusted Relay recorded it (ADR 0011).
 _Avoid_: Source IP, sender IP, origin
 
 **Trusted Relay**:
-A mail server whose Received lines are believed genuine, normally the receiving organisation's own gateway.
+A mail server whose Received lines are believed genuine, normally the receiving organisation's own gateway. Listed in settings (`[received] trusted_relays`); subdomains count too.
 _Avoid_: Trusted hop, gateway
+
+**Authentication Results**:
+What the receiving server recorded for SPF, DKIM and DMARC, read from the topmost Authentication-Results header and never re-checked. Each is pass, fail, another recorded value (such as softfail), or "not recorded", which is never treated as a fail.
+_Avoid_: Auth check, authentication status, SPF check (the tool checks nothing itself)
 
 **Protected Brand**:
 An organisation attackers are expected to pretend to be, listed with the Protected Domains that are genuinely its own. Its name in a display name, sent from any other domain, is impersonation.

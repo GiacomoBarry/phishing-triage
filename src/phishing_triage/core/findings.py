@@ -6,6 +6,7 @@ from datetime import datetime
 from email.message import EmailMessage
 
 from phishing_triage.core.attachments import Attachment
+from phishing_triage.core.authentication import AuthenticationResults
 from phishing_triage.core.lookups import LookupResult
 from phishing_triage.core.observables import Observable, ObservableKind
 from phishing_triage.core.settings import Settings
@@ -29,6 +30,8 @@ class RuleInput:
     observables: list[Observable]
     attachments: list[Attachment]
     lookups: list[LookupResult]
+    # SPF, DKIM and DMARC as the receiving server recorded them.
+    authentication: AuthenticationResults
     # When the Triage is happening, from the injected clock, for rules that judge age.
     now: datetime
 

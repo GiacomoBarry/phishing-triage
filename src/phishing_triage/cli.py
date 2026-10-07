@@ -192,6 +192,7 @@ def _readable_view(report: TriageReport) -> str:
     if report.cap_reason:
         lines.append(f"Capped:   {report.cap_reason}")
     lines += [f"Warning:  {warning}" for warning in report.warnings]
+    lines += ["", *_authentication_lines(report), "", *_received_lines(report)]
     lines += ["", "Attachments:"]
     for attachment in report.attachments:
         lines += [
@@ -219,6 +220,48 @@ def _readable_view(report: TriageReport) -> str:
         lines.append("  - None.")
     lines += ["", "Incident Note", "-------------", incident_note(report)]
     return "\n".join(lines)
+
+
+def _authentication_lines(report: TriageReport) -> list[str]:
+    """SPF, DKIM and DMARC as recorded, and which server recorded them."""
+    authentication = report.authentication
+    if not authentication.header_found:
+        heading = "Authentication (no Authentication-Results header):"
+    else:
+        heading = f"Authentication (recorded by {authentication.recorded_by or 'an unnamed server'}):"
+    return [
+        heading,
+        f"  SPF:   {authentication.spf.result}",
+        f"  DKIM:  {authentication.dkim.result}",
+        f"  DMARC: {authentication.dmarc.result}",
+    ]
+
+
+def _received_lines(report: TriageReport) -> list[str]:
+    """The Received chain hop by hop, then the Claimed Origin and how far to trust it."""
+    lines = ["Received chain (earliest first):"]
+    for number, hop in enumerate(report.received_hops, start=1):
+        line = f"  {number}. from {hop.from_name or '(not recorded)'}"
+        if hop.from_ip:
+            line += f" [{hop.from_ip}]"
+        line += f" by {hop.by_host or '(not recorded)'}"
+        if hop.received_at:
+            line += f" at {hop.received_at}"
+        lines.append(line)
+    if not report.received_hops:
+        lines.append("  - None.")
+
+    origin = report.claimed_origin
+    if origin is None:
+        lines.append("Claimed Origin: none found")
+    elif origin.verified:
+        lines.append(f"Claimed Origin: {origin.ip}, recorded by Trusted Relay {origin.recorded_by}")
+    else:
+        lines.append(
+            f"Claimed Origin: {origin.ip}, recorded by {origin.recorded_by}"
+            " (unverified: the sender could have forged it, as no Trusted Relay recorded it)"
+        )
+    return lines
 
 
 def _print_error(message: str) -> None:

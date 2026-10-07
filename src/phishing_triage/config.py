@@ -136,6 +136,7 @@ def _looks_like_an_extension(value: Any) -> bool:
 LIST_ITEM_CHECKS = {
     "domains": (_looks_like_a_domain, 'a list of domains, like ["example.com"]'),
     "risky_extensions": (_looks_like_an_extension, 'a list of file extensions, like ["exe"]'),
+    "trusted_relays": (_looks_like_a_domain, 'a list of mail server names, like ["mx.example.com"]'),
 }
 
 
@@ -158,4 +159,7 @@ def _build(data: dict[str, Any]) -> Settings:
         decisive_engines=data["virustotal"]["decisive_engines"],
         url_cap=data["lookups"]["url_cap"],
         new_domain_days=data["rdap"]["new_domain_days"],
+        trusted_relays=tuple(
+            relay.strip(".").lower() for relay in data["received"]["trusted_relays"]
+        ),
     )

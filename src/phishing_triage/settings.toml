@@ -20,6 +20,9 @@ risky_attachment = 25
 urlhaus_domain_listed = 20
 virustotal_low_detections = 15
 newly_registered_domain = 20
+dmarc_fail = 20
+spf_fail = 10
+dkim_fail = 10
 
 # Protected Brands: names attackers pretend to be. Each line is a brand name,
 # as it would appear in a display name, and the domains genuinely theirs.
@@ -85,3 +88,15 @@ url_cap = 10
 # counts as old or new.
 [rdap]
 new_domain_days = 30
+
+# Trusted Relays: mail servers whose Received headers you believe, normally
+# your organisation's own mail gateway. Subdomains count too. The sender can
+# forge any Received header added before the email reached a server you
+# trust, so without Trusted Relays the Claimed Origin (the earliest public IP
+# in the chain) is labelled unverified. With them, it is the IP your own
+# server recorded. For example:
+#   trusted_relays = ["mx.acme.co.uk"]
+# or, for Microsoft 365:
+#   trusted_relays = ["protection.outlook.com"]
+[received]
+trusted_relays = []

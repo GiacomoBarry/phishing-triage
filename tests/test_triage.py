@@ -22,7 +22,10 @@ from phishing_triage.core import (
     URLHAUS,
     VIRUSTOTAL,
     Attachment,
+    AuthenticationCheck,
+    AuthenticationResults,
     CachedLookup,
+    ClaimedOrigin,
     Finding,
     Lookup,
     LookupStarted,
@@ -1648,3 +1651,341 @@ def test_a_sender_address_at_an_ip_address_gives_no_sender_domain() -> None:
     report = triage(raw, DEFAULT_SETTINGS, providers=[])
 
     assert [o.kind for o in report.observables] == []
+
+
+# --- Authentication results and the Received chain (ticket 03) ---
+
+
+def authentication_of(*headers: str) -> AuthenticationResults:
+    raw = email_with_headers("From: Accounts <accounts@example.org>", *headers)
+    return triage(raw, DEFAULT_SETTINGS, providers=[]).authentication
+
+
+def test_spf_dkim_and_dmarc_are_read_from_the_recorded_header() -> None:
+    authentication = authentication_of(
+        "Authentication-Results: mx.example.com;"
+        " spf=pass (sender IP is 209.85.220.41) smtp.mailfrom=example.org;"
+        " dkim=fail (bad signature) header.d=example.org;"
+        " dmarc=softfail header.from=example.org"
+    )
+
+    assert authentication.recorded_by == "mx.example.com"
+    assert authentication.spf == AuthenticationCheck(
+        "pass", "spf=pass (sender IP is 209.85.220.41) smtp.mailfrom=example.org"
+    )
+    assert authentication.dkim == AuthenticationCheck("fail", "dkim=fail (bad signature) header.d=example.org")
+    # Any other recorded value is kept as it was written.
+    assert authentication.dmarc == AuthenticationCheck("softfail", "dmarc=softfail header.from=example.org")
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        pytest.param((), id="no header"),
+        pytest.param(("Authentication-Results: mx.example.com; none",), id="header with no checks"),
+        pytest.param(("Authentication-Results: mx.example.com; spf=pass",), id="only SPF recorded"),
+    ],
+)
+def test_checks_missing_from_the_header_are_not_recorded(headers: tuple[str, ...]) -> None:
+    authentication = authentication_of(*headers)
+
+    assert authentication.dkim == AuthenticationCheck("not recorded", "")
+    assert authentication.dmarc == AuthenticationCheck("not recorded", "")
+
+
+def test_only_the_topmost_header_counts_because_lower_ones_may_be_planted() -> None:
+    authentication = authentication_of(
+        "Authentication-Results: mx.example.com; dmarc=fail header.from=paypal.com",
+        "Authentication-Results: mx.attacker.example; dmarc=pass header.from=paypal.com",
+    )
+
+    assert authentication.recorded_by == "mx.example.com"
+    assert authentication.dmarc.result == "fail"
+
+
+def test_one_passing_dkim_signature_is_enough() -> None:
+    authentication = authentication_of(
+        "Authentication-Results: mx.example.com;"
+        " dkim=fail header.d=mailer.example; dkim=pass header.d=example.org"
+    )
+
+    assert authentication.dkim == AuthenticationCheck("pass", "dkim=pass header.d=example.org")
+
+
+def test_each_recorded_fail_gives_a_finding_with_the_recorded_evidence() -> None:
+    raw = email_with_headers(
+        "From: PayPal <service@paypal.com>",
+        "Authentication-Results: mx.example.com;"
+        " spf=fail smtp.mailfrom=paypal.com;"
+        " dkim=fail (no key for signature) header.d=paypal.com;"
+        " dmarc=fail (p=REJECT) header.from=paypal.com",
+    )
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert report.findings == [
+        Finding(
+            rule_id="dmarc_fail",
+            points=20,
+            decisive=False,
+            evidence="DMARC failed, as recorded by mx.example.com: dmarc=fail (p=REJECT) header.from=paypal.com.",
+        ),
+        Finding(
+            rule_id="spf_fail",
+            points=10,
+            decisive=False,
+            evidence="SPF failed, as recorded by mx.example.com: spf=fail smtp.mailfrom=paypal.com.",
+        ),
+        Finding(
+            rule_id="dkim_fail",
+            points=10,
+            decisive=False,
+            evidence=(
+                "DKIM failed, as recorded by mx.example.com:"
+                " dkim=fail (no key for signature) header.d=paypal.com."
+            ),
+        ),
+    ]
+    assert report.score == 40
+    assert report.verdict is Verdict.SUSPICIOUS
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        pytest.param(None, id="not recorded"),
+        pytest.param("Authentication-Results: mx.example.com; spf=pass; dkim=pass; dmarc=pass", id="all pass"),
+        pytest.param(
+            "Authentication-Results: mx.example.com; spf=softfail; dkim=none; dmarc=temperror",
+            id="other recorded values",
+        ),
+    ],
+)
+def test_anything_but_a_recorded_fail_gives_no_finding(header: str | None) -> None:
+    headers = ["From: Accounts <accounts@example.org>"] + ([header] if header else [])
+
+    report = triage(email_with_headers(*headers), DEFAULT_SETTINGS, providers=[])
+
+    assert report.findings == []
+
+
+def triage_with_received(*received: str, settings: Settings = DEFAULT_SETTINGS) -> TriageReport:
+    """Triage an email whose Received headers are given topmost (latest) first, as in a real email."""
+    headers = [f"Received: {line}" for line in received]
+    raw = email_with_headers(*headers, "From: Accounts <accounts@example.org>")
+    return triage(raw, settings, providers=[])
+
+
+def test_received_headers_become_hops_in_the_order_the_email_travelled() -> None:
+    report = triage_with_received(
+        "by mailbox.example.com with LMTP id 77; Mon, 05 Oct 2026 10:00:03 +0000",
+        "from mail-sor-f41.google.com (mail-sor-f41.google.com. [209.85.220.41])"
+        " by mx.example.com (Postfix) with ESMTPS id 4A1B2 for <recipient@example.com>;"
+        " Mon, 05 Oct 2026 10:00:02 +0000",
+        "from EX01.corp.example (10.1.2.3) by EX02.corp.example (10.1.2.4)"
+        " with Microsoft SMTP Server id 15.2.1; Mon, 5 Oct 2026 10:00:01 +0000",
+    )
+
+    assert [(hop.from_name, hop.from_ip, hop.by_host, hop.received_at) for hop in report.received_hops] == [
+        ("EX01.corp.example", "10.1.2.3", "ex02.corp.example", "Mon, 5 Oct 2026 10:00:01 +0000"),
+        ("mail-sor-f41.google.com", "209.85.220.41", "mx.example.com", "Mon, 05 Oct 2026 10:00:02 +0000"),
+        ("", "", "mailbox.example.com", "Mon, 05 Oct 2026 10:00:03 +0000"),
+    ]
+    assert report.received_hops[2].header == (
+        "by mailbox.example.com with LMTP id 77; Mon, 05 Oct 2026 10:00:03 +0000"
+    )
+
+
+@pytest.mark.parametrize(
+    ("received", "observed_ip"),
+    [
+        pytest.param(
+            "from 8.8.8.8 (unknown [45.33.32.156]) by mx.example.com", "45.33.32.156",
+            id="HELO pretending to be an IP",
+        ),
+        pytest.param(
+            "from [45.33.32.156] (helo=[8.8.8.8]) by mx.example.com", "45.33.32.156",
+            id="Exim with an IP in the HELO",
+        ),
+        pytest.param(
+            "from mail.example.net ([IPv6:2001:4860:4860::8888]) by mx.example.com",
+            "2001:4860:4860::8888",
+            id="IPv6",
+        ),
+        pytest.param("from friendly.example.net by mx.example.com", "", id="no IP recorded"),
+    ],
+)
+def test_a_hops_ip_is_the_one_the_receiving_server_saw_not_the_name_the_sender_gave(
+    received: str, observed_ip: str
+) -> None:
+    report = triage_with_received(received)
+
+    assert report.received_hops[0].from_ip == observed_ip
+
+
+def test_the_claimed_origin_is_the_earliest_public_ip_and_is_unverified() -> None:
+    report = triage_with_received(
+        "from mail-sor-f41.google.com (mail-sor-f41.google.com. [209.85.220.41]) by mx.example.com",
+        "from [192.168.1.20] (host.isp.example [45.33.32.156]) by smtp.gmail.com",
+        "from laptop (laptop.home [192.168.1.20]) by router.home",
+    )
+
+    assert report.claimed_origin == ClaimedOrigin(
+        ip="45.33.32.156", recorded_by="smtp.gmail.com", verified=False
+    )
+
+
+@pytest.mark.parametrize(
+    "ip",
+    [
+        pytest.param("10.1.2.3", id="private"),
+        pytest.param("127.0.0.1", id="loopback"),
+        pytest.param("100.64.0.9", id="shared address space"),
+        pytest.param("192.0.2.7", id="reserved for documentation"),
+        pytest.param("169.254.10.10", id="link-local"),
+        pytest.param("fd00::1", id="private IPv6"),
+    ],
+)
+def test_private_and_reserved_ips_are_never_the_claimed_origin(ip: str) -> None:
+    report = triage_with_received(f"from a.example (a.example [{ip}]) by mx.example.com")
+
+    assert report.received_hops[0].from_ip == ip
+    assert report.claimed_origin is None
+
+
+def test_a_forged_hop_at_the_bottom_of_the_chain_becomes_the_unverified_claimed_origin() -> None:
+    # The attacker wrote the bottom header themselves, naming Google's DNS
+    # server as the origin. Nothing in the email can prove it false, which is
+    # exactly why the Claimed Origin is labelled unverified.
+    report = triage_with_received(
+        "from evil.example (evil.example [45.33.32.156]) by mx.example.com",
+        "from trusted.example (trusted.example [8.8.8.8]) by evil.example",
+    )
+
+    assert report.claimed_origin == ClaimedOrigin(ip="8.8.8.8", recorded_by="evil.example", verified=False)
+
+
+def test_no_received_headers_means_no_hops_and_no_claimed_origin() -> None:
+    report = triage_with_received()
+
+    assert report.received_hops == []
+    assert report.claimed_origin is None
+
+
+TRUSTING_EXAMPLE_COM = replace(DEFAULT_SETTINGS, trusted_relays=("example.com",))
+
+# A phish delivered through the organisation's gateway (gw.example.com) to
+# its mail server (exchange.example.com). The bottom header is forged.
+THROUGH_THE_GATEWAY = (
+    "from gw.example.com (gw.example.com [10.0.0.5]) by EXCHANGE.example.com",
+    "from mail.evil.example (mail.evil.example [45.33.32.156]) by gw.example.com",
+    "from trusted.example (trusted.example [8.8.8.8]) by mail.evil.example",
+)
+
+
+def test_without_trusted_relays_the_forged_bottom_hop_is_the_claimed_origin() -> None:
+    report = triage_with_received(*THROUGH_THE_GATEWAY)
+
+    assert report.claimed_origin == ClaimedOrigin(ip="8.8.8.8", recorded_by="mail.evil.example", verified=False)
+
+
+def test_a_trusted_relay_records_the_claimed_origin_and_forged_hops_are_ignored() -> None:
+    report = triage_with_received(*THROUGH_THE_GATEWAY, settings=TRUSTING_EXAMPLE_COM)
+
+    # exchange.example.com recorded a private IP, its own gateway, so the
+    # gateway's header is followed; the gateway recorded the public IP.
+    assert report.claimed_origin == ClaimedOrigin(ip="45.33.32.156", recorded_by="gw.example.com", verified=True)
+
+
+def test_a_planted_header_naming_the_trusted_relay_is_not_followed() -> None:
+    # The attacker wrote a second "by gw.example.com" header below the real
+    # one. The real gateway already recorded a public IP, so the walk stops there.
+    report = triage_with_received(
+        "from mail.evil.example (mail.evil.example [45.33.32.156]) by gw.example.com",
+        "from trusted.example (trusted.example [8.8.8.8]) by gw.example.com",
+        settings=TRUSTING_EXAMPLE_COM,
+    )
+
+    assert report.claimed_origin == ClaimedOrigin(ip="45.33.32.156", recorded_by="gw.example.com", verified=True)
+
+
+@pytest.mark.parametrize(
+    "trusted_relays",
+    [
+        pytest.param(("gw.example.com",), id="exact name"),
+        pytest.param(("Example.COM",), id="parent domain, any case"),
+    ],
+)
+def test_a_trusted_relay_matches_its_name_or_any_subdomain(trusted_relays: tuple[str, ...]) -> None:
+    report = triage_with_received(
+        "from mail.evil.example (mail.evil.example [45.33.32.156]) by gw.example.com",
+        "from trusted.example (trusted.example [8.8.8.8]) by mail.evil.example",
+        settings=replace(DEFAULT_SETTINGS, trusted_relays=trusted_relays),
+    )
+
+    assert report.claimed_origin == ClaimedOrigin(ip="45.33.32.156", recorded_by="gw.example.com", verified=True)
+
+
+def test_a_lookalike_of_a_trusted_relay_is_not_trusted() -> None:
+    report = triage_with_received(
+        "from mail.evil.example (mail.evil.example [45.33.32.156]) by gw.notexample.com",
+        settings=TRUSTING_EXAMPLE_COM,
+    )
+
+    assert report.claimed_origin == ClaimedOrigin(ip="45.33.32.156", recorded_by="gw.notexample.com", verified=False)
+
+
+def test_a_trusted_relay_that_only_saw_private_ips_falls_back_to_the_unverified_origin() -> None:
+    # Sent from inside the network: the gateway never saw a public IP.
+    report = triage_with_received(
+        "from laptop.corp.example (laptop.corp.example [10.9.8.7]) by gw.example.com",
+        "from laptop (localhost [127.0.0.1]) by laptop.corp.example",
+        "from forged.example (forged.example [8.8.8.8]) by laptop",
+        settings=TRUSTING_EXAMPLE_COM,
+    )
+
+    assert report.claimed_origin == ClaimedOrigin(ip="8.8.8.8", recorded_by="laptop", verified=False)
+
+
+def test_a_header_without_a_server_name_is_still_read() -> None:
+    # Microsoft 365 writes its Authentication-Results without naming itself.
+    raw = email_with_headers(
+        "From: PayPal <service@paypal.com>",
+        "Authentication-Results: spf=fail (sender IP is 45.33.32.156) smtp.mailfrom=paypal.com;"
+        " dkim=none (message not signed) header.d=none; dmarc=fail action=quarantine header.from=paypal.com",
+    )
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert report.authentication.recorded_by == ""
+    assert report.authentication.spf.result == "fail"
+    assert report.authentication.dkim.result == "none"
+    assert [finding.evidence for finding in report.findings] == [
+        "DMARC failed, as recorded by an unnamed server: dmarc=fail action=quarantine header.from=paypal.com.",
+        "SPF failed, as recorded by an unnamed server:"
+        " spf=fail (sender IP is 45.33.32.156) smtp.mailfrom=paypal.com.",
+    ]
+
+
+def test_local_delivery_on_a_trusted_relay_is_walked_past() -> None:
+    # The top hop is the gateway delivering to a mailbox: it records no sender.
+    report = triage_with_received(
+        "by gw.example.com with LMTP id 77",
+        "from mail.evil.example (mail.evil.example [45.33.32.156]) by gw.example.com",
+        settings=TRUSTING_EXAMPLE_COM,
+    )
+
+    assert report.claimed_origin == ClaimedOrigin(ip="45.33.32.156", recorded_by="gw.example.com", verified=True)
+
+
+def test_a_trusted_hop_naming_a_sender_without_a_readable_ip_stops_the_walk() -> None:
+    # The gateway's real header names a sender, but in a form the parser
+    # can't read an IP from. Walking on would mean believing the planted
+    # header below it, so the Claimed Origin stays unverified.
+    report = triage_with_received(
+        "from mail.evil.example (1-2-3-4.cust.isp.example) by gw.example.com",
+        "from planted.example (planted.example [8.8.8.8]) by gw.example.com",
+        settings=TRUSTING_EXAMPLE_COM,
+    )
+
+    assert report.claimed_origin == ClaimedOrigin(ip="8.8.8.8", recorded_by="gw.example.com", verified=False)

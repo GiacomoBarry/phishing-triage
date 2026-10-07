@@ -11,9 +11,11 @@ from enum import StrEnum
 from typing import Any
 
 from phishing_triage.core.attachments import Attachment
+from phishing_triage.core.authentication import AuthenticationResults
 from phishing_triage.core.findings import Finding
 from phishing_triage.core.lookups import LookupResult, NotChecked
 from phishing_triage.core.observables import Observable
+from phishing_triage.core.received import ClaimedOrigin, ReceivedHop
 
 FORMAT_VERSION = 1
 
@@ -40,6 +42,14 @@ class TriageReport:
     from_address: str
     display_name: str
     subject: str
+
+    # SPF, DKIM and DMARC as the receiving server recorded them.
+    authentication: AuthenticationResults
+
+    # The route the email took, earliest hop first.
+    received_hops: list[ReceivedHop]
+    # Where the email appears to have come from, or None if no public IP was found.
+    claimed_origin: ClaimedOrigin | None
 
     # What was pulled out of the email: URLs, link domains, then attachment hashes.
     observables: list[Observable]

@@ -5,6 +5,7 @@ saves files or reads environment variables: that is the CLI's job.
 """
 
 from phishing_triage.core.attachments import Attachment, display_filename
+from phishing_triage.core.authentication import AuthenticationCheck, AuthenticationResults
 from phishing_triage.core.cache import LONGEST_LIFETIME, CachedLookup, LookupCache
 from phishing_triage.core.errors import UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
@@ -19,6 +20,7 @@ from phishing_triage.core.lookups import (
 )
 from phishing_triage.core.observables import LABELS, Observable, ObservableKind, defanged
 from phishing_triage.core.providers import RDAP, URLHAUS, VIRUSTOTAL, Lookup, Outcome, Provider
+from phishing_triage.core.received import ClaimedOrigin, ReceivedHop
 from phishing_triage.core.report import TriageReport, Verdict
 from phishing_triage.core.settings import Settings
 from phishing_triage.core.triage import triage
@@ -27,7 +29,10 @@ __all__ = [
     "LABELS",
     "LONGEST_LIFETIME",
     "Attachment",
+    "AuthenticationCheck",
+    "AuthenticationResults",
     "CachedLookup",
+    "ClaimedOrigin",
     "Finding",
     "Lookup",
     "LookupCache",
@@ -40,6 +45,7 @@ __all__ = [
     "Progress",
     "ProviderStopped",
     "Provider",
+    "ReceivedHop",
     "RDAP",
     "Rule",
     "RuleInput",

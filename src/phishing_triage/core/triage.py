@@ -10,6 +10,7 @@ from email.parser import BytesParser
 from importlib.metadata import version
 
 from phishing_triage.core.attachments import extract_attachments
+from phishing_triage.core.authentication import read_authentication_results
 from phishing_triage.core.cache import LookupCache
 from phishing_triage.core.clock import Clock, SystemClock
 from phishing_triage.core.errors import UnparseableEmailError
@@ -17,6 +18,7 @@ from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookups import Progress, find_not_checked, run_lookups
 from phishing_triage.core.observables import extract_observables
 from phishing_triage.core.providers import Provider
+from phishing_triage.core.received import find_claimed_origin, read_received_chain
 from phishing_triage.core.report import TriageReport
 from phishing_triage.core.rules import BUILT_IN_RULES
 from phishing_triage.core.settings import Settings
@@ -71,8 +73,15 @@ def triage(
         cache,
         settings.decisive_engines,
     )
+    authentication = read_authentication_results(message)
+    received_hops = read_received_chain(message)
     rule_input = RuleInput(
-        message=message, observables=observables, attachments=attachments, lookups=lookups, now=now
+        message=message,
+        observables=observables,
+        attachments=attachments,
+        lookups=lookups,
+        authentication=authentication,
+        now=now,
     )
 
     findings: list[Finding] = []
@@ -90,6 +99,9 @@ def triage(
         from_address=from_address,
         display_name=display_name,
         subject=str(message.get("Subject", "")),
+        authentication=authentication,
+        received_hops=received_hops,
+        claimed_origin=find_claimed_origin(received_hops, settings.trusted_relays),
         observables=observables,
         attachments=attachments,
         lookups=lookups,

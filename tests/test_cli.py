@@ -25,13 +25,14 @@ VALID_SETTINGS = (
     "[points]\nreply_to_mismatch = 20\n"
     "display_name_impersonation = 25\nlookalike_domain = 30\nurl_shortener = 10\n"
     "risky_attachment = 25\nurlhaus_domain_listed = 20\nvirustotal_low_detections = 15\n"
-    "newly_registered_domain = 20\n"
+    "newly_registered_domain = 20\ndmarc_fail = 20\nspf_fail = 10\ndkim_fail = 10\n"
     '[brands]\n"PayPal" = ["paypal.com"]\n'
     '[shorteners]\ndomains = ["bit.ly"]\n'
     '[attachments]\nrisky_extensions = ["exe", ".js"]\n'
     "[virustotal]\ndecisive_engines = 3\n"
     "[lookups]\nurl_cap = 10\n"
     "[rdap]\nnew_domain_days = 30\n"
+    '[received]\ntrusted_relays = ["MX.Example.com."]\n'
 )
 
 
@@ -266,6 +267,16 @@ def test_settings_option_loads_an_edited_settings_file(
             id="negative url cap",
         ),
         pytest.param(
+            VALID_SETTINGS.replace('["MX.Example.com."]', '"mx.example.com"'),
+            'received.trusted_relays must be a list of mail server names, like ["mx.example.com"]',
+            id="trusted relays not a list",
+        ),
+        pytest.param(
+            VALID_SETTINGS.split("[received]")[0],
+            "missing section [received]",
+            id="missing received section",
+        ),
+        pytest.param(
             VALID_SETTINGS.replace("new_domain_days = 30", "new_domain_days = -1"),
             "rdap.new_domain_days must not be negative",
             id="negative new-domain limit",
@@ -480,3 +491,73 @@ def test_evidence_comes_back_unchanged_from_the_cache(
 
     lookups = json.loads(capsys.readouterr().out)["lookups"]
     assert [(lookup["from_cache"], lookup["evidence"]) for lookup in lookups] == [(True, evidence)] * 2
+
+
+ROUTED_EMAIL = (
+    "Received: from mail.evil.example (mail.evil.example [45.33.32.156])"
+    " by mx.example.com; Mon, 05 Oct 2026 10:00:02 +0000\n"
+    "Received: from laptop (laptop [192.168.1.20]) by mail.evil.example\n"
+    "Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=example.org; dkim=fail\n"
+    "From: a@example.org\nSubject: Hi\n\nHello.\n"
+)
+
+
+def test_readable_view_shows_authentication_the_received_chain_and_an_unverified_claimed_origin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email_path = tmp_path / "routed.eml"
+    email_path.write_text(ROUTED_EMAIL)
+
+    main([str(email_path)])
+
+    out = capsys.readouterr().out
+    assert (
+        "Authentication (recorded by mx.example.com):\n"
+        "  SPF:   pass\n"
+        "  DKIM:  fail\n"
+        "  DMARC: not recorded\n"
+    ) in out
+    assert (
+        "Received chain (earliest first):\n"
+        "  1. from laptop [192.168.1.20] by mail.evil.example\n"
+        "  2. from mail.evil.example [45.33.32.156] by mx.example.com"
+        " at Mon, 05 Oct 2026 10:00:02 +0000\n"
+        "Claimed Origin: 45.33.32.156, recorded by mx.example.com"
+        " (unverified: the sender could have forged it, as no Trusted Relay recorded it)\n"
+    ) in out
+
+
+def test_readable_view_labels_a_claimed_origin_recorded_by_a_trusted_relay(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email_path = tmp_path / "routed.eml"
+    email_path.write_text(ROUTED_EMAIL)
+    settings_path = tmp_path / "trusting.toml"
+    settings_path.write_text(VALID_SETTINGS)  # Trusts "MX.Example.com.", written untidily.
+
+    main([str(email_path), "--settings", str(settings_path)])
+
+    out = capsys.readouterr().out
+    assert "Claimed Origin: 45.33.32.156, recorded by Trusted Relay mx.example.com\n" in out
+
+
+def test_json_report_carries_authentication_hops_and_claimed_origin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email_path = tmp_path / "routed.eml"
+    email_path.write_text(ROUTED_EMAIL)
+
+    main([str(email_path), "--json"])
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["authentication"]["dkim"] == {"result": "fail", "recorded": "dkim=fail"}
+    assert [hop["from_ip"] for hop in report["received_hops"]] == ["192.168.1.20", "45.33.32.156"]
+    assert report["claimed_origin"] == {"ip": "45.33.32.156", "recorded_by": "mx.example.com", "verified": False}
+
+
+def test_readable_view_says_when_nothing_was_recorded(capsys: pytest.CaptureFixture[str]) -> None:
+    main([CLEAN_EMAIL])
+
+    out = capsys.readouterr().out
+    assert "Authentication (no Authentication-Results header):\n  SPF:   not recorded\n" in out
+    assert "Received chain (earliest first):\n  - None.\nClaimed Origin: none found\n" in out

@@ -11,6 +11,7 @@ from phishing_triage.core.attachments import (
     has_hidden_characters,
     previous_extension_of,
 )
+from phishing_triage.core.authentication import AuthenticationCheck
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookalike import imitated_domain, is_genuine
 from phishing_triage.core.observables import LABELS, ObservableKind, defanged
@@ -27,6 +28,9 @@ KNOWN_MALICIOUS = "known_malicious"
 URLHAUS_DOMAIN_LISTED = "urlhaus_domain_listed"
 VIRUSTOTAL_LOW_DETECTIONS = "virustotal_low_detections"
 NEWLY_REGISTERED_DOMAIN = "newly_registered_domain"
+DMARC_FAIL = "dmarc_fail"
+SPF_FAIL = "spf_fail"
+DKIM_FAIL = "dkim_fail"
 
 # Extensions a "double extension" hides behind: the part the reader is meant
 # to notice in a name like invoice.pdf.exe.
@@ -298,6 +302,44 @@ def newly_registered_domain(rule_input: RuleInput, settings: Settings) -> list[F
     return findings
 
 
+def dmarc_fail(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find a DMARC fail recorded by the receiving server.
+
+    DMARC failing means neither SPF nor DKIM vouched for the domain in the
+    From address, the one the reader sees.
+    """
+    authentication = rule_input.authentication
+    return _recorded_fail(DMARC_FAIL, "DMARC", authentication.dmarc, authentication.recorded_by, settings)
+
+
+def spf_fail(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find an SPF fail: the sending server wasn't allowed to send for the envelope domain."""
+    authentication = rule_input.authentication
+    return _recorded_fail(SPF_FAIL, "SPF", authentication.spf, authentication.recorded_by, settings)
+
+
+def dkim_fail(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find a DKIM fail: the email's signature didn't match, so it may have been altered or forged."""
+    authentication = rule_input.authentication
+    return _recorded_fail(DKIM_FAIL, "DKIM", authentication.dkim, authentication.recorded_by, settings)
+
+
+def _recorded_fail(
+    rule_id: str, name: str, check: AuthenticationCheck, recorded_by: str, settings: Settings
+) -> list[Finding]:
+    """A Finding if the check was recorded as "fail". "Not recorded" never counts."""
+    if check.result != "fail":
+        return []
+    return [
+        Finding(
+            rule_id=rule_id,
+            points=settings.points[rule_id],
+            decisive=False,
+            evidence=f"{name} failed, as recorded by {recorded_by or 'an unnamed server'}: {check.recorded}.",
+        )
+    ]
+
+
 def _attachment_red_flags(attachment: Attachment, risky_extensions: tuple[str, ...]) -> list[str]:
     """Each reason an attachment looks dangerous, worded to follow its name."""
     reasons = []
@@ -354,6 +396,9 @@ def _domains(message: EmailMessage, header_name: str) -> list[str]:
 
 
 BUILT_IN_RULES: tuple[Rule, ...] = (
+    dmarc_fail,
+    spf_fail,
+    dkim_fail,
     reply_to_mismatch,
     display_name_impersonation,
     lookalike_domain,

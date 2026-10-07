@@ -40,6 +40,10 @@ class Settings:
     # A domain registered fewer than this many days ago gives a Finding.
     new_domain_days: int
 
+    # Trusted Relays: mail servers (and their subdomains) whose Received
+    # headers are believed genuine, normally the organisation's own gateway.
+    trusted_relays: tuple[str, ...]
+
     @property
     def protected_domains(self) -> tuple[str, ...]:
         """Every brand's domains in one list, without repeats."""
