@@ -29,6 +29,13 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Defanging**: rewriting a URL so it can't be clicked (`hxxps://evil[.]com`) while staying readable (`defang_url` in `core/urls.py`).
 - **Grouping with `dict.setdefault`**: builds a dict of lists in one step, used to collect evidence per imitated domain (`lookalike_domain` in `core/rules.py`).
 - **Monkeypatching**: swapping out a function during one test, here the network functions, so any connection attempt fails the test (`no_network` fixture in `tests/test_triage.py`).
+- **Hashing a file in memory**: `hashlib` fingerprints the attachment's bytes without saving them anywhere; one file gets three hashes because different Providers use different ones (`_describe` in `core/attachments.py`).
+- **Magic bytes**: the first few bytes of a file identify its real format, whatever its name says (`ARCHIVE_SIGNATURES` in `core/attachments.py`).
+- **Bit flags**: several yes/no settings packed into one number; `flags & 0x1` reads the lowest bit, which in a ZIP means "encrypted" (`_zip_is_encrypted` in `core/attachments.py`).
+- **In-memory files (`io.BytesIO`)**: wraps bytes so code expecting a file can read them without touching the disk (`_zip_is_encrypted` in `core/attachments.py`).
+- **Unicode categories**: every character has a category; "Cf" (format) covers invisible ones like the right-to-left override, and "C*" covers all control characters (`has_hidden_characters` and `display_filename` in `core/attachments.py`).
+- **Escaping output**: printing risky characters as visible codes (`\u202e`) so input can't scramble the display (`display_filename` in `core/attachments.py`).
+- **Lookup table of functions**: a dict mapping a setting's name to the function that checks it (`LIST_ITEM_CHECKS` in `config.py`).
 - **Pure function**: the output depends only on the input and nothing else changes (`incident_note()` in `core/incident_note.py`).
 - **Dataclass**: a class that mainly holds data, with the boilerplate generated for you; `frozen=True` makes it read-only (`TriageReport` in `core/report.py`, `Settings` in `core/settings.py`).
 - **Enum (StrEnum, IntEnum)**: a fixed set of named choices; a `StrEnum` member is also a string, so it turns into JSON easily (`Verdict` in `core/report.py`), and an `IntEnum` member is also a number, so it can be an exit code (`ExitCode` in `cli.py`).

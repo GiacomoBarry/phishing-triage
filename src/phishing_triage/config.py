@@ -82,15 +82,16 @@ def _fixed_keys_problem(
     """Check a section that must have exactly the template's keys.
 
     Each value must be the same sort as the shipped default: a whole number
-    of 0 or more, or a list of domains.
+    of 0 or more, or a list of the items LIST_ITEM_CHECKS describes.
     """
     for key, default in template_values.items():
         if key not in values:
             return f"missing {section}.{key}"
         value = values[key]
         if isinstance(default, list):
-            if not isinstance(value, list) or not all(_looks_like_a_domain(v) for v in value):
-                return f'{section}.{key} must be a list of domains, like ["example.com"]'
+            looks_right, described = LIST_ITEM_CHECKS[key]
+            if not isinstance(value, list) or not all(looks_right(v) for v in value):
+                return f"{section}.{key} must be {described}"
             continue
         # bool is a kind of int in Python, so rule it out explicitly.
         if not isinstance(value, int) or isinstance(value, bool):
@@ -125,6 +126,17 @@ def _looks_like_a_domain(value: Any) -> bool:
     )
 
 
+def _looks_like_an_extension(value: Any) -> bool:
+    return isinstance(value, str) and value.removeprefix(".").isalnum()
+
+
+# How to check each item of a list setting, and how to describe it in an error.
+LIST_ITEM_CHECKS = {
+    "domains": (_looks_like_a_domain, 'a list of domains, like ["example.com"]'),
+    "risky_extensions": (_looks_like_an_extension, 'a list of file extensions, like ["exe"]'),
+}
+
+
 def _build(data: dict[str, Any]) -> Settings:
     return Settings(
         points=data["points"],
@@ -136,5 +148,9 @@ def _build(data: dict[str, Any]) -> Settings:
         },
         shortener_domains=tuple(
             domain.strip(".").lower() for domain in data["shorteners"]["domains"]
+        ),
+        risky_extensions=tuple(
+            extension.removeprefix(".").lower()
+            for extension in data["attachments"]["risky_extensions"]
         ),
     )

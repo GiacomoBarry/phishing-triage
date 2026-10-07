@@ -9,6 +9,7 @@ from email.message import EmailMessage
 from email.parser import BytesParser
 from importlib.metadata import version
 
+from phishing_triage.core.attachments import extract_attachments
 from phishing_triage.core.errors import UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.observables import extract_observables
@@ -47,8 +48,9 @@ def triage(
     if not from_address:
         warnings.append("The email has no From address.")
 
-    observables = extract_observables(message)
-    rule_input = RuleInput(message=message, observables=observables)
+    attachments = extract_attachments(message)
+    observables = extract_observables(message, attachments)
+    rule_input = RuleInput(message=message, observables=observables, attachments=attachments)
 
     findings: list[Finding] = []
     for rule in rules:
@@ -64,6 +66,7 @@ def triage(
         display_name=display_name,
         subject=str(message.get("Subject", "")),
         observables=observables,
+        attachments=attachments,
         findings=findings,
         score=score,
         verdict=verdict,

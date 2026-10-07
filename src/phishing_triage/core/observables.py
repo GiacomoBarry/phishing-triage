@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from enum import StrEnum
 
+from phishing_triage.core.attachments import Attachment
 from phishing_triage.core.urls import find_urls, host_of
 
 
@@ -13,6 +14,7 @@ class ObservableKind(StrEnum):
 
     URL = "url"
     DOMAIN = "domain"
+    SHA256 = "sha256"  # The SHA-256 hash of an attachment.
 
 
 @dataclass(frozen=True)
@@ -23,17 +25,21 @@ class Observable:
     value: str
 
 
-def extract_observables(message: EmailMessage) -> list[Observable]:
-    """Return the email's Observables: every URL, then every link domain, without repeats.
+def extract_observables(message: EmailMessage, attachments: list[Attachment]) -> list[Observable]:
+    """Return the email's Observables without repeats: every URL, every link domain,
+    then every attachment's SHA-256.
 
     A URL whose host is an IP address gives no domain Observable.
     """
     urls = find_urls(message)
     hosts = (host_of(url) for url in urls)
     domains = dict.fromkeys(host for host in hosts if host and not _is_ip_address(host))
-    return [Observable(ObservableKind.URL, url) for url in urls] + [
-        Observable(ObservableKind.DOMAIN, domain) for domain in domains
-    ]
+    hashes = dict.fromkeys(attachment.sha256 for attachment in attachments)
+    return (
+        [Observable(ObservableKind.URL, url) for url in urls]
+        + [Observable(ObservableKind.DOMAIN, domain) for domain in domains]
+        + [Observable(ObservableKind.SHA256, sha256) for sha256 in hashes]
+    )
 
 
 def _is_ip_address(host: str) -> bool:

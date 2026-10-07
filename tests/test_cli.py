@@ -22,8 +22,10 @@ VALID_SETTINGS = (
     "[verdict]\nsuspicious_from = 30\nmalicious_from = 60\n"
     "[points]\nreply_to_mismatch = 20\n"
     "display_name_impersonation = 25\nlookalike_domain = 30\nurl_shortener = 10\n"
+    "risky_attachment = 25\n"
     '[brands]\n"PayPal" = ["paypal.com"]\n'
     '[shorteners]\ndomains = ["bit.ly"]\n'
+    '[attachments]\nrisky_extensions = ["exe", ".js"]\n'
 )
 
 
@@ -218,6 +220,16 @@ def test_settings_option_loads_an_edited_settings_file(
             "shorteners.domains must be a list of domains",
             id="shortener without a dot",
         ),
+        pytest.param(
+            VALID_SETTINGS.replace('["exe", ".js"]', '["exe", "pdf.exe"]'),
+            'attachments.risky_extensions must be a list of file extensions, like ["exe"]',
+            id="extension with a dot inside",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace('["exe", ".js"]', '["exe", 7]'),
+            "attachments.risky_extensions must be a list of file extensions",
+            id="extension not text",
+        ),
     ],
 )
 def test_broken_settings_file_exits_7_with_a_clear_error(
@@ -255,3 +267,15 @@ def test_readable_view_has_no_clickable_urls_but_json_keeps_them(
     assert "http" not in readable
     assert "hxxps://paypa1[.]com/login" in readable
     assert {"kind": "url", "value": "https://paypa1.com/login"} in report["observables"]
+
+
+def test_readable_view_lists_attachments_with_all_three_hashes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    main([str(FIXTURES / "benign_attachment.eml")])
+
+    out = capsys.readouterr().out
+    assert "  - agenda.txt (text/plain, 37 bytes)" in out
+    assert "SHA-256: 56466756b631879f95cb959987c9d36c3581d1f12d37914d50e73f5d7d99ceff" in out
+    assert "MD5:     21ef88c005f99434769f4cc4ca2de563" in out
+    assert "SHA-1:   0302994af3ee7c69191e3897ebae59a306519baa" in out

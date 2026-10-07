@@ -19,6 +19,7 @@ from phishing_triage.core import (
     UnparseableEmailError,
     Verdict,
     describe_finding,
+    display_filename,
     incident_note,
     triage,
 )
@@ -134,6 +135,17 @@ def _readable_view(report: TriageReport) -> str:
         f"Subject:  {report.subject or '(no subject)'}",
     ]
     lines += [f"Warning:  {warning}" for warning in report.warnings]
+    lines += ["", "Attachments:"]
+    for attachment in report.attachments:
+        lines += [
+            f"  - {display_filename(attachment.filename)}"
+            f" ({attachment.content_type}, {attachment.size:,} bytes)",
+            f"      SHA-256: {attachment.sha256}",
+            f"      MD5:     {attachment.md5}",
+            f"      SHA-1:   {attachment.sha1}",
+        ]
+    if not report.attachments:
+        lines.append("  - None.")
     lines += ["", "Findings:"]
     lines += [f"  - {describe_finding(finding)}" for finding in report.findings]
     if not report.findings:

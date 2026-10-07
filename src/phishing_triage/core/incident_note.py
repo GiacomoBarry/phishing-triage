@@ -4,14 +4,18 @@ Generating it is a pure function: it only reads the report.
 More sections (Not Checked, Recommended Actions) arrive in later tickets.
 """
 
+from phishing_triage.core.attachments import display_filename
 from phishing_triage.core.findings import Finding
-from phishing_triage.core.observables import ObservableKind
+from phishing_triage.core.observables import Observable, ObservableKind
 from phishing_triage.core.report import TriageReport
 from phishing_triage.core.urls import defang_domain, defang_url
 
-# How each kind of Observable is labelled and made unclickable in the Observables section.
-OBSERVABLE_LABELS = {ObservableKind.URL: "URL", ObservableKind.DOMAIN: "Domain"}
-DEFANGERS = {ObservableKind.URL: defang_url, ObservableKind.DOMAIN: defang_domain}
+# How each kind of Observable is labelled in the Observables section.
+OBSERVABLE_LABELS = {
+    ObservableKind.URL: "URL",
+    ObservableKind.DOMAIN: "Domain",
+    ObservableKind.SHA256: "SHA-256",
+}
 
 
 def incident_note(report: TriageReport) -> str:
@@ -46,12 +50,24 @@ def _observables(report: TriageReport) -> str:
     Reputation Lookups arrive.
     """
     lines = ["Observables (defanged):"]
-    lines += [
-        f"- {OBSERVABLE_LABELS[o.kind]}: {DEFANGERS[o.kind](o.value)}" for o in report.observables
-    ]
+    lines += [f"- {_observable_line(o, report)}" for o in report.observables]
     if not report.observables:
         lines.append("- None.")
     return "\n".join(lines)
+
+
+def _observable_line(observable: Observable, report: TriageReport) -> str:
+    """One Observable, made safe to paste: URLs and domains defanged, hashes named."""
+    label = OBSERVABLE_LABELS[observable.kind]
+    if observable.kind is ObservableKind.URL:
+        return f"{label}: {defang_url(observable.value)}"
+    if observable.kind is ObservableKind.DOMAIN:
+        return f"{label}: {defang_domain(observable.value)}"
+    # A hash isn't clickable, so it needs no defanging. Name the file(s) it belongs to.
+    filenames = [
+        display_filename(a.filename) for a in report.attachments if a.sha256 == observable.value
+    ]
+    return f"{label}: {observable.value} ({', '.join(filenames)})"
 
 
 def describe_finding(finding: Finding) -> str:

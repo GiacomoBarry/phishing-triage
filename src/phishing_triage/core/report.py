@@ -10,6 +10,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from phishing_triage.core.attachments import Attachment
 from phishing_triage.core.findings import Finding
 from phishing_triage.core.observables import Observable
 
@@ -39,8 +40,11 @@ class TriageReport:
     display_name: str
     subject: str
 
-    # What was pulled out of the email: URLs, then link domains.
+    # What was pulled out of the email: URLs, link domains, then attachment hashes.
     observables: list[Observable]
+
+    # Each attachment, described without opening it.
+    attachments: list[Attachment]
 
     # The outcome.
     findings: list[Finding]

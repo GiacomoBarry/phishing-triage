@@ -1,6 +1,10 @@
 """Tests at Seam 1: the core entry point, `triage()`."""
 
+import builtins
+import io
+import os
 import socket
+import zipfile
 import urllib.request
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -12,6 +16,7 @@ import pytest
 
 from phishing_triage.config import load_settings
 from phishing_triage.core import (
+    Attachment,
     Finding,
     Observable,
     ObservableKind,
@@ -654,3 +659,220 @@ def test_incident_note_lists_observables_defanged_and_nothing_clickable() -> Non
         "- Domain: evil[.]example\n"
     )
     assert "http" not in note
+
+
+# --- Attachments: hashes and attachment Findings (ticket 08) ---
+
+
+def email_with_attachments(*attachments: tuple[str, bytes, str], inline: bool = False) -> bytes:
+    """An email with a short body and the given (filename, content, declared type) attachments."""
+    message = EmailMessage()
+    message["From"] = "Accounts <accounts@example.org>"
+    message["Subject"] = "Invoice"
+    message.set_content("Please see attached.")
+    for filename, content, content_type in attachments:
+        maintype, subtype = content_type.split("/")
+        message.add_attachment(
+            content,
+            maintype=maintype,
+            subtype=subtype,
+            filename=filename,
+            disposition="inline" if inline else "attachment",
+        )
+    return message.as_bytes()
+
+
+def attachment_evidence(raw: bytes) -> list[str]:
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+    return [f.evidence for f in report.findings if f.rule_id == "risky_attachment"]
+
+
+def a_zip(*, encrypted: bool = False) -> bytes:
+    """A small ZIP, optionally marked as encrypted.
+
+    Python can't write a really encrypted ZIP, but the tool only reads the
+    "encrypted" flag, so setting that bit in both places it's stored is enough.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("invoice.exe", b"MZ not really a program")
+    data = bytearray(buffer.getvalue())
+    if encrypted:
+        data[6] |= 0x1  # Flags in the file's local header.
+        data[data.index(b"PK\x01\x02") + 8] |= 0x1  # Flags in the table of contents.
+    return bytes(data)
+
+
+def test_benign_attachment_is_recorded_with_correct_hashes_and_no_finding() -> None:
+    report = triage(load("benign_attachment.eml"), DEFAULT_SETTINGS, providers=[])
+
+    # Expected hashes worked out separately with shasum and md5, not with this code.
+    sha256 = "56466756b631879f95cb959987c9d36c3581d1f12d37914d50e73f5d7d99ceff"
+    assert report.attachments == [
+        Attachment(
+            filename="agenda.txt",
+            content_type="text/plain",
+            size=37,
+            sha256=sha256,
+            md5="21ef88c005f99434769f4cc4ca2de563",
+            sha1="0302994af3ee7c69191e3897ebae59a306519baa",
+            archive_type="",
+            password_protected=False,
+        )
+    ]
+    assert report.observables == [Observable(ObservableKind.SHA256, sha256)]
+    assert report.findings == []
+    assert f"- SHA-256: {sha256} (agenda.txt)" in incident_note(report)
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "content_type", "evidence"),
+    [
+        pytest.param(
+            "setup.exe", b"MZ", "application/octet-stream",
+            'Attachment "setup.exe" has a risky extension (.exe).', id="risky extension",
+        ),
+        pytest.param(
+            "Invoice.PDF.exe", b"MZ", "application/pdf",
+            'Attachment "Invoice.PDF.exe" has a risky extension (.exe) and has a double extension (.pdf.exe).',
+            id="double extension",
+        ),
+        pytest.param(
+            "invoice.pdf      .exe", b"MZ", "application/octet-stream",
+            'Attachment "invoice.pdf      .exe" has a risky extension (.exe)'
+            " and has a double extension (.pdf.exe).",
+            id="double extension padded with spaces",
+        ),
+        pytest.param(
+            "login.html", b"<form>", "text/html",
+            'Attachment "login.html" has a risky extension (.html).', id="HTML page",
+        ),
+        pytest.param(
+            "invoice\u202egpj.exe", b"MZ", "application/octet-stream",
+            'Attachment "invoice\\u202egpj.exe" has hidden characters that can disguise its real'
+            " extension and has a risky extension (.exe).",
+            id="right-to-left override",
+        ),
+        pytest.param(
+            "documents.zip", a_zip(), "application/zip",
+            'Attachment "documents.zip" is an archive (zip).', id="zip archive",
+        ),
+        pytest.param(
+            "statement.pdf", a_zip(), "application/pdf",
+            'Attachment "statement.pdf" is an archive (zip).', id="zip disguised as a PDF",
+        ),
+        pytest.param(
+            "backup.rar", b"not checked", "application/octet-stream",
+            'Attachment "backup.rar" is an archive (rar).', id="archive by extension",
+        ),
+        pytest.param(
+            "documents.zip", a_zip(encrypted=True), "application/zip",
+            'Attachment "documents.zip" is a password-protected archive, so it can\'t be scanned.',
+            id="password-protected zip",
+        ),
+    ],
+)
+def test_dangerous_looking_attachments_give_a_finding_naming_the_file_and_reason(
+    filename: str, content: bytes, content_type: str, evidence: str
+) -> None:
+    raw = email_with_attachments((filename, content, content_type))
+
+    assert attachment_evidence(raw) == [evidence]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "content_type"),
+    [
+        pytest.param("report.docx", a_zip(), "application/octet-stream", id="Word file is a ZIP inside"),
+        pytest.param("photo.jpg", b"\xff\xd8\xff", "image/jpeg", id="image"),
+        pytest.param("notes.v2.txt", b"hello", "text/plain", id="harmless double extension"),
+        pytest.param("exe", b"hello", "text/plain", id="name without an extension"),
+    ],
+)
+def test_ordinary_attachments_give_no_finding(filename: str, content: bytes, content_type: str) -> None:
+    assert attachment_evidence(email_with_attachments((filename, content, content_type))) == []
+
+
+def test_several_dangerous_attachments_give_one_finding() -> None:
+    raw = email_with_attachments(
+        ("setup.exe", b"MZ", "application/octet-stream"),
+        ("agenda.txt", b"hello", "text/plain"),
+        ("archive.zip", a_zip(), "application/zip"),
+    )
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert attachment_evidence(raw) == [
+        'Attachment "setup.exe" has a risky extension (.exe).'
+        ' Attachment "archive.zip" is an archive (zip).'
+    ]
+    assert report.score == 25
+    assert [a.filename for a in report.attachments] == ["setup.exe", "agenda.txt", "archive.zip"]
+
+
+def test_an_exe_marked_inline_is_still_an_attachment() -> None:
+    raw = email_with_attachments(("setup.exe", b"MZ", "application/octet-stream"), inline=True)
+
+    assert attachment_evidence(raw) == ['Attachment "setup.exe" has a risky extension (.exe).']
+
+
+def test_an_attached_email_is_hashed_whole_but_not_opened() -> None:
+    inner = EmailMessage()
+    inner["From"] = "PayPal <x@paypa1.com>"
+    inner["Subject"] = "Inner"
+    inner.set_content("https://inner-link.example/login")
+    outer = EmailMessage()
+    outer["From"] = "Jo <jo@example.org>"
+    outer["Subject"] = "Fwd: suspicious"
+    outer.set_content("Is this real?")
+    outer.add_attachment(inner)
+
+    report = triage(outer.as_bytes(), DEFAULT_SETTINGS, providers=[])
+
+    assert [a.content_type for a in report.attachments] == ["message/rfc822"]
+    assert report.attachments[0].size > 0
+    # Nothing from inside the attached email is used (ticket 06 decides that).
+    assert [o.kind for o in report.observables] == [ObservableKind.SHA256]
+    assert report.findings == []
+
+
+def test_same_file_attached_twice_gives_one_hash_observable() -> None:
+    raw = email_with_attachments(
+        ("a.txt", b"same", "text/plain"), ("b.txt", b"same", "text/plain")
+    )
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert len(report.attachments) == 2
+    assert [o.kind for o in report.observables] == [ObservableKind.SHA256]
+    assert "(a.txt, b.txt)" in incident_note(report)
+
+
+def forbid_files_and_unpacking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """From now on in this test, opening a file or reading inside a ZIP fails it.
+
+    A plain function rather than a fixture, so the test can build its ZIP first.
+    """
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("file opened or archive unpacked")
+
+    monkeypatch.setattr(builtins, "open", refuse)
+    monkeypatch.setattr(io, "open", refuse)
+    monkeypatch.setattr(os, "open", refuse)
+    for method in ("open", "read", "extract", "extractall"):
+        monkeypatch.setattr(zipfile.ZipFile, method, refuse)
+
+
+def test_attachments_are_never_written_to_disk_or_unpacked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = email_with_attachments(
+        ("setup.exe", b"MZ", "application/octet-stream"),
+        ("documents.zip", a_zip(encrypted=True), "application/zip"),
+    )
+    forbid_files_and_unpacking(monkeypatch)
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert report.attachments[1].password_protected

@@ -14,6 +14,7 @@ reply_to_mismatch = 20
 display_name_impersonation = 25
 lookalike_domain = 30
 url_shortener = 10
+risky_attachment = 25
 
 # Protected Brands: names attackers pretend to be. Each line is a brand name,
 # as it would appear in a display name, and the domains genuinely theirs.
@@ -40,4 +41,20 @@ url_shortener = 10
 domains = [
     "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly",
     "rebrand.ly", "cutt.ly", "shorturl.at", "tiny.cc", "rb.gy", "t.ly", "s.id",
+]
+
+# Attachments: extensions (without the dot) that can run code when opened,
+# or show a fake login page. Archives and password-protected ZIPs are
+# flagged whatever their extension, so they aren't listed here.
+[attachments]
+risky_extensions = [
+    # Programs and scripts
+    "exe", "scr", "com", "pif", "bat", "cmd", "ps1", "vbs", "vbe", "js", "jse",
+    "wsf", "wsh", "hta", "msi", "lnk", "jar",
+    # Disk images, which can smuggle the above past filters
+    "iso", "img", "vhd", "vhdx",
+    # OneNote, and Office files that can carry macros
+    "one", "docm", "xlsm", "pptm",
+    # Web pages and images that can contain a fake login form or script
+    "html", "htm", "shtml", "svg",
 ]

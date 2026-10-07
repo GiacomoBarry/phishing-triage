@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from email.message import EmailMessage
 
+from phishing_triage.core.attachments import Attachment
 from phishing_triage.core.observables import Observable, ObservableKind
 from phishing_triage.core.settings import Settings
 
@@ -24,6 +25,7 @@ class RuleInput:
 
     message: EmailMessage
     observables: list[Observable]
+    attachments: list[Attachment]
 
     def values(self, kind: ObservableKind) -> list[str]:
         """The values of every Observable of one kind, in the order they were found."""

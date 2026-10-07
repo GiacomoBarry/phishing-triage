@@ -3,6 +3,13 @@
 import re
 from email.message import EmailMessage
 
+from phishing_triage.core.attachments import (
+    Attachment,
+    display_filename,
+    extension_of,
+    has_hidden_characters,
+    previous_extension_of,
+)
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookalike import imitated_domain, is_genuine
 from phishing_triage.core.observables import ObservableKind
@@ -13,6 +20,14 @@ REPLY_TO_MISMATCH = "reply_to_mismatch"
 DISPLAY_NAME_IMPERSONATION = "display_name_impersonation"
 LOOKALIKE_DOMAIN = "lookalike_domain"
 URL_SHORTENER = "url_shortener"
+RISKY_ATTACHMENT = "risky_attachment"
+
+# Extensions a "double extension" hides behind: the part the reader is meant
+# to notice in a name like invoice.pdf.exe.
+DECOY_EXTENSIONS = frozenset(
+    {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "csv",
+     "jpg", "jpeg", "png", "gif", "mp3", "mp4"}
+)
 
 
 def reply_to_mismatch(rule_input: RuleInput, settings: Settings) -> list[Finding]:
@@ -139,6 +154,56 @@ def url_shortener(rule_input: RuleInput, settings: Settings) -> list[Finding]:
     ]
 
 
+def risky_attachment(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find attachments that look dangerous from the outside.
+
+    Risky extensions, double extensions, hidden characters in the name,
+    archives and password-protected ZIPs (which mail filters can't scan
+    inside). There is one Finding for the whole email, naming each file.
+    """
+    sentences = []
+    for attachment in rule_input.attachments:
+        reasons = _attachment_red_flags(attachment, settings.risky_extensions)
+        if reasons:
+            name = display_filename(attachment.filename)
+            sentences.append(f'Attachment "{name}" {_join_with_and(reasons)}.')
+    if not sentences:
+        return []
+    return [
+        Finding(
+            rule_id=RISKY_ATTACHMENT,
+            points=settings.points[RISKY_ATTACHMENT],
+            decisive=False,
+            evidence=" ".join(sentences),
+        )
+    ]
+
+
+def _attachment_red_flags(attachment: Attachment, risky_extensions: tuple[str, ...]) -> list[str]:
+    """Each reason an attachment looks dangerous, worded to follow its name."""
+    reasons = []
+    extension = extension_of(attachment.filename)
+    previous = previous_extension_of(attachment.filename)
+    if has_hidden_characters(attachment.filename):
+        reasons.append("has hidden characters that can disguise its real extension")
+    if extension in risky_extensions:
+        reasons.append(f"has a risky extension (.{extension})")
+        if previous in DECOY_EXTENSIONS:
+            reasons.append(f"has a double extension (.{previous}.{extension})")
+    if attachment.password_protected:
+        reasons.append("is a password-protected archive, so it can't be scanned")
+    elif attachment.archive_type:
+        reasons.append(f"is an archive ({attachment.archive_type})")
+    return reasons
+
+
+def _join_with_and(items: list[str]) -> str:
+    """Join ["a", "b", "c"] as "a, b and c"."""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
 def _is_on(host: str, domains: tuple[str, ...]) -> bool:
     """Is `host` one of `domains`, or a subdomain of one?"""
     return any(host == domain or host.endswith("." + domain) for domain in domains)
@@ -174,4 +239,5 @@ BUILT_IN_RULES: tuple[Rule, ...] = (
     display_name_impersonation,
     lookalike_domain,
     url_shortener,
+    risky_attachment,
 )

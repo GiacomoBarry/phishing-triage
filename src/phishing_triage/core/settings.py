@@ -27,6 +27,9 @@ class Settings:
     # Domains of URL shorteners, whose links hide their real destination.
     shortener_domains: tuple[str, ...]
 
+    # Attachment extensions (without the dot) that can run code or fake a web page.
+    risky_extensions: tuple[str, ...]
+
     @property
     def protected_domains(self) -> tuple[str, ...]:
         """Every brand's domains in one list, without repeats."""
