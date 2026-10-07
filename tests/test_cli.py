@@ -372,3 +372,102 @@ def test_progress_goes_to_stderr_defanged_and_json_output_stays_clean(
     assert "for FakeIntel's rate limit...\n" in captured.err
     assert "Looking up 2 of 2: FakeIntel, URL hxxps://evil[.]example/x\n" in captured.err
     assert "evil.example" not in captured.err
+
+
+class CountingProvider:
+    """A fake Provider giving one answer for everything, counting how often it's asked."""
+
+    name = "FakeIntel"
+    handles = frozenset({ObservableKind.URL, ObservableKind.DOMAIN})
+    lookups_per_minute = None
+
+    def __init__(self, answer: Lookup) -> None:
+        self.answer = answer
+        self.asked = 0
+
+    def lookup(self, observable: Observable) -> Lookup:
+        self.asked += 1
+        return self.answer
+
+
+UNKNOWN = Lookup(Outcome.UNKNOWN, "not listed")
+MALICIOUS = Lookup(Outcome.MALICIOUS, "listed for testing")
+
+
+def link_email(tmp_path: Path) -> str:
+    email_path = tmp_path / "link.eml"
+    email_path.write_text("From: a@example.org\nSubject: Hi\n\nhttps://evil.example/x\n")
+    return str(email_path)
+
+
+def test_a_second_run_answers_from_the_cache(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email = link_email(tmp_path)
+    main([email], providers=[CountingProvider(MALICIOUS)])
+    capsys.readouterr()
+    second = CountingProvider(UNKNOWN)
+
+    exit_code = main([email], providers=[second])
+
+    assert second.asked == 0
+    assert exit_code == 2  # The cached malicious answer, not the new Provider's.
+    out = capsys.readouterr().out
+    assert "FakeIntel: URL hxxps://evil[.]example/x -> malicious (listed for testing) (cached, fetched " in out
+    assert (tmp_path / ".cache" / "lookups.json").exists()
+
+
+def test_no_cache_asks_again_and_keeps_the_fresh_answer(tmp_path: Path) -> None:
+    email = link_email(tmp_path)
+    main([email], providers=[CountingProvider(UNKNOWN)])
+    fresh = CountingProvider(MALICIOUS)
+
+    assert main([email, "--no-cache"], providers=[fresh]) == 2
+    assert fresh.asked == 2
+
+    later = CountingProvider(UNKNOWN)
+    assert main([email], providers=[later]) == 2  # The fresh answer was stored.
+    assert later.asked == 0
+
+
+def test_a_damaged_cache_file_is_ignored(tmp_path: Path) -> None:
+    (tmp_path / ".cache").mkdir()
+    (tmp_path / ".cache" / "lookups.json").write_text("{not json")
+    provider = CountingProvider(UNKNOWN)
+
+    assert main([link_email(tmp_path)], providers=[provider]) == 0
+    assert provider.asked == 2
+
+
+def test_a_damaged_time_in_the_cache_is_ignored(tmp_path: Path) -> None:
+    email = link_email(tmp_path)
+    main([email], providers=[CountingProvider(UNKNOWN)])
+    cache_file = tmp_path / ".cache" / "lookups.json"
+    cache_file.write_text(cache_file.read_text().replace('"stored_at": ', '"stored_at": 1e20, "x": '))
+    provider = CountingProvider(UNKNOWN)
+
+    assert main([email], providers=[provider]) == 0
+    assert provider.asked == 2
+
+
+def test_a_cache_that_cannot_be_written_still_gives_a_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".cache").write_text("a file where the folder should be")
+
+    assert main([link_email(tmp_path)], providers=[CountingProvider(MALICIOUS)]) == 2
+    assert "Warning: could not save the cache" in capsys.readouterr().err
+
+
+def test_evidence_comes_back_unchanged_from_the_cache(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email = link_email(tmp_path)
+    evidence = {"malicious": 5, "flagged_by": ["EngineA", "EngineB"], "last_analysis": None}
+    main([email, "--json"], providers=[CountingProvider(Lookup(Outcome.MALICIOUS, "5 of 90", evidence))])
+    capsys.readouterr()
+
+    main([email, "--json"], providers=[CountingProvider(UNKNOWN)])
+
+    lookups = json.loads(capsys.readouterr().out)["lookups"]
+    assert [(lookup["from_cache"], lookup["evidence"]) for lookup in lookups] == [(True, evidence)] * 2

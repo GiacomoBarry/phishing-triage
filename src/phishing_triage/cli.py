@@ -16,6 +16,7 @@ from typing import NoReturn
 
 from dotenv import load_dotenv
 
+from phishing_triage.cache_file import JsonFileCache, WriteOnlyCache
 from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     LABELS,
@@ -90,7 +91,16 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
     try:
         if providers is None:
             providers = _real_providers(settings)
-        report = triage(raw_email, settings, providers, on_progress=_show_progress)
+        cache = JsonFileCache()
+        report = triage(
+            raw_email,
+            settings,
+            providers,
+            on_progress=_show_progress,
+            cache=WriteOnlyCache(cache) if args.no_cache else cache,
+        )
+        if cache.save_error:
+            print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
     except UnparseableEmailError as error:
         _print_error(f"{email_path} is not a parseable email. {error}")
         return ExitCode.UNPARSEABLE_EMAIL
@@ -117,6 +127,8 @@ def _show_progress(event: Progress) -> None:
     if isinstance(event, LookupStarted):
         observable = f"{LABELS[event.observable.kind]} {defanged(event.observable)}"
         message = f"Looking up {event.number} of {event.total}: {event.provider}, {observable}"
+        if event.from_cache:
+            message += " (cached)"
     elif isinstance(event, ProviderStopped):
         message = f"Not asking {event.provider} again: {event.reason}"
     else:
@@ -144,6 +156,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--json",
         action="store_true",
         help="print the Triage Report as JSON instead of the readable view",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="look everything up afresh instead of using cached answers (fresh ones are still cached)",
     )
     parser.add_argument(
         "--settings",
@@ -189,7 +206,9 @@ def _readable_view(report: TriageReport) -> str:
     lines += ["", "Reputation Lookups:"]
     lines += [
         f"  - {result.provider}: {LABELS[result.observable.kind]} {defanged(result.observable)}"
-        f" -> {result.outcome.replace('_', ' ')}" + (f" ({result.detail})" if result.detail else "")
+        f" -> {result.outcome.replace('_', ' ')}"
+        + (f" ({result.detail})" if result.detail else "")
+        + (f" (cached, fetched {result.cached_at})" if result.from_cache else "")
         for result in report.lookups
     ]
     if not report.lookups:

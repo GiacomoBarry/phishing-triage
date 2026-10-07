@@ -5,6 +5,7 @@ saves files or reads environment variables: that is the CLI's job.
 """
 
 from phishing_triage.core.attachments import Attachment, display_filename
+from phishing_triage.core.cache import LONGEST_LIFETIME, CachedLookup, LookupCache
 from phishing_triage.core.errors import UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.incident_note import describe_finding, incident_note
@@ -24,9 +25,12 @@ from phishing_triage.core.triage import triage
 
 __all__ = [
     "LABELS",
+    "LONGEST_LIFETIME",
     "Attachment",
+    "CachedLookup",
     "Finding",
     "Lookup",
+    "LookupCache",
     "LookupResult",
     "LookupStarted",
     "NotChecked",

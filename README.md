@@ -42,7 +42,15 @@ Looking up 2 of 4: VirusTotal, Domain malware[.]wicar[.]org
 Waiting 14s for VirusTotal's rate limit...
 ```
 
-An email with three links and an attachment takes about 100 seconds on a free VirusTotal key. Each email's domains are looked up first, then URLs (at most 10, see `[lookups]` below), then attachment hashes, and each one is looked up only once. Until the cache (ticket 14) exists, don't triage huge batches in a loop.
+An email with three links and an attachment takes about 100 seconds on a free VirusTotal key. Each email's domains are looked up first, then URLs (at most 10, see `[lookups]` below), then attachment hashes, and each one is looked up only once.
+
+### The cache
+
+Answers are cached in `.cache/lookups.json` (git-ignored), so triaging the same email again is near-instant and uses no quota. Malicious answers are reused for 7 days; suspicious, clean and Unknown ones for only 24 hours, so a link that has since been flagged isn't hidden for long. Not Checked is never cached. Cached answers are marked in the progress lines and the readable view (`(cached, fetched 2026-10-07T19:04:19Z)`) and in the Triage Report (`from_cache`, `cached_at`). Changing `decisive_engines` ignores old answers ([ADR 0009](docs/adr/0009-reputation-cache-keyed-on-the-decisive-engine-count.md)).
+
+```sh
+uv run phishing-triage path/to/email.eml --no-cache   # look everything up afresh (still saves the new answers)
+```
 
 ## Running a Triage
 

@@ -21,7 +21,9 @@ flowchart LR
     env[".env API keys"] -->|"build_providers()"| providers["Providers<br/>providers/urlhaus.py<br/>providers/virustotal.py"]
     providers --> cli
     providers <-.->|"lookup endpoints only (ADR 0001)"| internet["URLhaus API<br/>VirusTotal API"]
-    cli -->|"raw bytes, Settings, Providers"| core
+    cli -->|"raw bytes, Settings, Providers, cache"| core
+    cli -->|"builds JsonFileCache"| cachefile[".cache/lookups.json<br/>cache_file.py"]
+    lookups <-.->|"get / put, through the LookupCache it was given"| cachefile
 
     subgraph core["Core: triage() in core/triage.py"]
         direction TB
@@ -52,7 +54,7 @@ Step by step:
 4. The core parses the email. If the input has none of the standard email headers (From, To, Subject, Date and so on), it raises `UnparseableEmailError` and the CLI stops with exit code 4.
 5. The core describes each attachment: filename, declared type, size, SHA-256, MD5 and SHA-1, whether it's an archive (judged by its first bytes, name and declared type) and whether a ZIP is password-protected (from its table of contents only). Everything happens in memory; nothing is opened, unpacked or saved.
 6. The core extracts the **Observables**: every URL in the plain-text and HTML bodies (not attachments), decoded offline from defanged text, HTML entities and link wrappers such as SafeLinks, then each URL's domain, then each attachment's SHA-256. Nothing is ever fetched ([ADR 0001](adr/0001-reputation-lookups-only.md)).
-7. The core asks every Provider about each Observable of a kind it handles (**Reputation Lookups**): domains first, then URLs (only the first 10; the rest are Not Checked, "over lookup cap"), then attachment hashes. It waits between lookups to keep to each Provider's rate limit, and reports progress through a callback, which the CLI prints to stderr. Each answer is malicious, suspicious, clean, **Unknown** or **Not Checked** with a reason. A Provider that fails or crashes becomes Not Checked; the run carries on. A Provider that says to stop asking (unreachable, no or bad key, rate limited, or crashed) isn't asked again in this Triage ([ADR 0008](adr/0008-pace-providers-and-stop-asking-after-provider-wide-failures.md)).
+7. The core asks every Provider about each Observable of a kind it handles (**Reputation Lookups**): domains first, then URLs (only the first 10; the rest are Not Checked, "over lookup cap"), then attachment hashes. A fresh answer in the cache is used instead of asking (and without waiting). Otherwise it waits between lookups to keep to each Provider's rate limit, and reports progress through a callback, which the CLI prints to stderr. Each answer is malicious, suspicious, clean, **Unknown** or **Not Checked** with a reason. A Provider that fails or crashes becomes Not Checked; the run carries on. A Provider that says to stop asking (unreachable, no or bad key, rate limited, or crashed) isn't asked again in this Triage ([ADR 0008](adr/0008-pace-providers-and-stop-asking-after-provider-wide-failures.md)).
 8. The core runs each red-flag rule. A rule is given a `RuleInput` (the parsed email, its Observables, its attachments and the lookup results) and returns zero or more **Findings**, each with its points, whether it is decisive, and its evidence.
 9. The core adds up the points of the non-decisive Findings into the **Score** (capped at 100) and reaches a **Verdict**: any **Decisive Finding** means malicious, and otherwise the thresholds in the settings decide. Then, if the Verdict is clean but any URL or attachment was Not Checked, it is raised to suspicious, because clean requires evidence.
 10. The core builds the **Triage Report**: metadata (report ID, timestamp, tool version, format version, SHA-256 of the email), the sender and subject, the Observables, the attachments, every lookup result, what was Not Checked, the Findings, the Score, the Verdict (and the Verdict before the cap, with the reason) and any warnings.
@@ -75,6 +77,8 @@ Step by step:
 | `core/incident_note.py` | Turns a Triage Report into the **Incident Note** text: a summary line, the key Findings with their evidence, every Observable defanged (attachment hashes are shown with their filenames), then what was Not Checked and why. It only reads the report, so it can't have side effects. Along with `triage()`, it is part of the core's public interface, and tests use it directly. `describe_finding()` is shared with the CLI so a Finding reads the same everywhere. |
 | `core/settings.py` | The shape of the tunable settings: Finding points, Verdict thresholds, the **Protected Brands** with their domains, URL shortener domains, risky attachment extensions and the decisive VirusTotal Engine count. The values come from the settings file. |
 | `settings.toml` | The default settings, shipped with the tool ([ADR 0003](adr/0003-settings-in-a-packaged-toml-file.md)). |
+| `core/cache.py` | What the cache is to the core: the `LookupCache` shape (`get`, `put`), the cache key (Provider, Observable and decisive Engine count), and how long each outcome stays fresh (malicious 7 days, others 24 hours, Not Checked never) ([ADR 0009](adr/0009-reputation-cache-keyed-on-the-decisive-engine-count.md)). |
+| `cache_file.py` | Outside the core: the real cache, a JSON file in `.cache/`, written safely via a temporary file. A damaged file counts as empty, entries over 7 days old are dropped, and a failed save only gives a warning. `WriteOnlyCache` wraps it for `--no-cache`. |
 | `config.py` | Outside the core: reads a settings file, checks it against the shipped one and builds the `Settings`. |
 | `core/providers.py` | The shape every **Provider** shares: a name, the Observable kinds it handles, its rate limit (`lookups_per_minute`), and `lookup()`, which returns a `Lookup` (an `Outcome` with a detail, raw evidence, and `stop_asking` when it can't answer anything else). There is deliberately no way to submit or scan ([ADR 0001](adr/0001-reputation-lookups-only.md)). |
 | `core/lookups.py` | Runs the Reputation Lookups: domains first, the URL cap, waiting for rate limits, not asking a Provider again once it says to stop, and progress events (`LookupStarted`, `WaitingForRateLimit`, `ProviderStopped`). Each Provider's pacing and stop state live in one `_ProviderTurns` object. Turns any Provider failure into Not Checked, and works out which Observables no Provider answered for. |
@@ -88,4 +92,4 @@ Step by step:
 
 ## What comes next
 
-Later tickets add more Providers (AbuseIPDB, RDAP), a cache, and more rules and kinds of Observable (IP addresses).
+Later tickets add more Providers (AbuseIPDB, RDAP) and more rules and kinds of Observable (IP addresses).

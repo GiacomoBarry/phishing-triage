@@ -10,6 +10,7 @@ from email.parser import BytesParser
 from importlib.metadata import version
 
 from phishing_triage.core.attachments import extract_attachments
+from phishing_triage.core.cache import LookupCache
 from phishing_triage.core.clock import Clock, SystemClock
 from phishing_triage.core.errors import UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
@@ -39,13 +40,15 @@ def triage(
     rules: Sequence[Rule] = BUILT_IN_RULES,
     clock: Clock | None = None,
     on_progress: Callable[[Progress], None] | None = None,
+    cache: LookupCache | None = None,
 ) -> TriageReport:
     """Run one Triage on the raw bytes of an email and return its Triage Report.
 
     `rules` defaults to the built-in red-flag rules, and `clock` to the real
     clock, used to wait out Providers' rate limits. Tests can pass their own.
     `on_progress`, if given, is called as lookups start and while waiting, so
-    the caller can show progress; the core itself never prints.
+    the caller can show progress; the core itself never prints. `cache`, if
+    given, supplies fresh earlier answers and keeps new ones.
     Raises UnparseableEmailError if the bytes are not an email at all.
     """
     message = _parse(raw_email)
@@ -63,6 +66,8 @@ def triage(
         settings.url_cap,
         clock or SystemClock(),
         on_progress or (lambda event: None),
+        cache,
+        settings.decisive_engines,
     )
     rule_input = RuleInput(
         message=message, observables=observables, attachments=attachments, lookups=lookups

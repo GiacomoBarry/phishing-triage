@@ -38,6 +38,10 @@ _Avoid_: Scan, submission, check
 The most URLs looked up in one Triage (`[lookups] url_cap`, 10 by default). URLs over it are Not Checked with the reason "over lookup cap", so they can't let the email be called clean.
 _Avoid_: Limit, quota (those are the Provider's rate limits)
 
+**Cached Lookup**:
+A Reputation Lookup's answer reused from an earlier Triage instead of asking the Provider again. It is only reused while fresh (7 days if malicious, 24 hours otherwise) and is always marked with when it was fetched.
+_Avoid_: Stale result, offline lookup
+
 **Unknown**:
 The outcome of a Reputation Lookup where the Provider has no record of the Observable, or has a record but nothing vouching for it either way (ADR 0006). It is never the same as clean.
 _Avoid_: Clean, benign, no result

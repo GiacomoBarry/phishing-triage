@@ -6,8 +6,10 @@ Not Checked with the reason, so the gap is visible instead of hidden.
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
+from phishing_triage.core.cache import CachedLookup, LookupCache, cache_key, is_fresh, worth_caching
 from phishing_triage.core.clock import Clock
 from phishing_triage.core.observables import Observable, ObservableKind
 from phishing_triage.core.providers import Lookup, Outcome, Provider
@@ -40,6 +42,9 @@ class LookupResult:
     outcome: Outcome
     detail: str
     evidence: dict[str, Any] = field(default_factory=dict)
+    # Whether this answer came from the cache, and when it was first fetched (UTC).
+    from_cache: bool = False
+    cached_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,12 +57,13 @@ class NotChecked:
 
 @dataclass(frozen=True)
 class LookupStarted:
-    """Progress: lookup `number` of `total` is about to be made."""
+    """Progress: lookup `number` of `total` is about to be made, or was found in the cache."""
 
     number: int
     total: int
     provider: str
     observable: Observable
+    from_cache: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,18 +92,22 @@ def run_lookups(
     url_cap: int,
     clock: Clock,
     on_progress: Callable[[Progress], None],
+    cache: LookupCache | None,
+    decisive_engines: int,
 ) -> list[LookupResult]:
     """Ask every Provider about every Observable of a kind it handles, domains first.
 
     Only the first `url_cap` URLs are looked up; the rest are Not Checked.
     Each Provider is asked no faster than its rate limit allows, by waiting.
     A Provider that says to stop asking isn't asked again in this Triage.
+    A fresh answer in `cache` is used instead of asking (or waiting).
     """
     urls = [o for o in observables if o.kind is ObservableKind.URL]
     over_cap = set(urls[url_cap:])
     # sorted() is stable, so within each kind the email's order is kept.
     in_order = sorted(observables, key=lambda o: LOOKUP_ORDER.index(o.kind))
     turns = [_ProviderTurns(provider, clock) for provider in providers]
+    store: LookupCache = cache or _NoCache()
     to_do = [(observable, turn) for observable in in_order for turn in turns if turn.handles(observable)]
     total = sum(1 for observable, _ in to_do if observable not in over_cap)
 
@@ -105,10 +115,18 @@ def run_lookups(
     results = []
     for observable, turn in to_do:
         if observable in over_cap:
-            lookup = Lookup(Outcome.NOT_CHECKED, OVER_CAP)
+            lookup, stored_at = Lookup(Outcome.NOT_CHECKED, OVER_CAP), None
         else:
             number += 1
-            lookup = turn.look_up(observable, number, total, on_progress)
+            key = cache_key(turn.provider.name, observable, decisive_engines)
+
+            def ask() -> Lookup:
+                return turn.look_up(observable, number, total, on_progress)
+
+            def announce_hit() -> None:
+                on_progress(LookupStarted(number, total, turn.provider.name, observable, from_cache=True))
+
+            lookup, stored_at = _cached_or_asked(store, key, clock, ask, announce_hit)
         results.append(
             LookupResult(
                 provider=turn.provider.name,
@@ -116,6 +134,8 @@ def run_lookups(
                 outcome=lookup.outcome,
                 detail=lookup.detail,
                 evidence=lookup.evidence,
+                from_cache=stored_at is not None,
+                cached_at=_utc_text(stored_at) if stored_at is not None else None,
             )
         )
     return results
@@ -192,3 +212,39 @@ class _ProviderTurns:
         if self._last_asked is None:
             return 0.0
         return max(0.0, self._last_asked + self._gap - self._clock.now())
+
+
+def _cached_or_asked(
+    store: LookupCache,
+    key: str,
+    clock: Clock,
+    ask: Callable[[], Lookup],
+    announce_hit: Callable[[], None],
+) -> tuple[Lookup, float | None]:
+    """A fresh cached answer if there is one, otherwise ask (and cache the answer).
+
+    Returns the Lookup and, if it came from the cache, when it was stored.
+    """
+    cached = store.get(key)
+    if cached is not None and is_fresh(cached, clock.now()):
+        announce_hit()
+        return cached.lookup, cached.stored_at
+    lookup = ask()
+    if worth_caching(lookup):
+        store.put(key, CachedLookup(lookup, clock.now()))
+    return lookup, None
+
+
+class _NoCache:
+    """Stands in when no cache is given: never has anything, keeps nothing."""
+
+    def get(self, key: str) -> CachedLookup | None:
+        return None
+
+    def put(self, key: str, entry: CachedLookup) -> None:
+        pass
+
+
+def _utc_text(seconds: float) -> str:
+    """Seconds since 1970 as readable UTC, such as 2026-10-07T18:19:45Z."""
+    return datetime.fromtimestamp(seconds, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

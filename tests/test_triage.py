@@ -22,6 +22,7 @@ from phishing_triage.core import (
     URLHAUS,
     VIRUSTOTAL,
     Attachment,
+    CachedLookup,
     Finding,
     Lookup,
     LookupStarted,
@@ -998,6 +999,8 @@ def test_unknown_everywhere_can_still_be_clean() -> None:
         "outcome": "unknown",
         "detail": "not listed",
         "evidence": {},
+        "from_cache": False,
+        "cached_at": None,
     }
 
 
@@ -1406,3 +1409,116 @@ def test_progress_says_when_a_provider_will_not_be_asked_again() -> None:
         LookupStarted(number=1, total=3, provider="FakeIntel", observable=Observable(ObservableKind.DOMAIN, "evil.example")),
         ProviderStopped(provider="FakeIntel", reason="no API key"),
     ]
+
+
+# --- Reputation cache (ticket 14) ---
+
+
+class MemoryCache:
+    """A cache kept in a dict, standing in for the CLI's JSON file."""
+
+    def __init__(self) -> None:
+        self.entries: dict[str, CachedLookup] = {}
+
+    def get(self, key: str) -> CachedLookup | None:
+        return self.entries.get(key)
+
+    def put(self, key: str, entry: CachedLookup) -> None:
+        self.entries[key] = entry
+
+
+def test_a_second_triage_uses_cached_answers_without_asking_or_waiting() -> None:
+    cache, clock = MemoryCache(), FakeClock()
+    first = FakeProvider(answers={"https://evil.example/invoice": LISTED}, lookups_per_minute=4)
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[first], clock=clock, cache=cache)
+    clock.sleeps.clear()
+
+    second = FakeProvider(lookups_per_minute=4)
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[second], clock=clock, cache=cache)
+
+    assert second.received == []
+    assert clock.sleeps == []
+    assert [(r.observable.value, r.outcome, r.from_cache) for r in report.lookups] == [
+        ("evil.example", Outcome.UNKNOWN, True),
+        ("https://evil.example/invoice", Outcome.MALICIOUS, True),
+    ]
+    assert report.verdict is Verdict.MALICIOUS
+
+
+DAY = 24 * 60 * 60
+
+
+def asked_again_after(answer: Lookup, seconds: float, settings: Settings = DEFAULT_SETTINGS) -> bool:
+    """Cache `answer` for LINK_EMAIL's Observables, wait `seconds`, triage again: was the Provider asked?"""
+    cache, clock = MemoryCache(), FakeClock()
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider(default=answer)], clock=clock, cache=cache)
+    clock.time += seconds
+    second = FakeProvider(default=answer)
+    triage(LINK_EMAIL, settings, providers=[second], clock=clock, cache=cache)
+    return len(second.received) > 0
+
+
+@pytest.mark.parametrize(
+    ("answer", "lifetime"),
+    [
+        pytest.param(LISTED, 7 * DAY, id="malicious: 7 days"),
+        pytest.param(Lookup(Outcome.SUSPICIOUS, "2 of 90 engines flag it as malicious"), DAY, id="suspicious: 24 hours"),
+        pytest.param(Lookup(Outcome.CLEAN, "0 of 90 engines flag it as malicious"), DAY, id="clean: 24 hours"),
+        pytest.param(Lookup(Outcome.UNKNOWN, "not listed"), DAY, id="unknown: 24 hours"),
+    ],
+)
+def test_cached_answers_are_used_until_they_expire(answer: Lookup, lifetime: int) -> None:
+    assert not asked_again_after(answer, lifetime - 1)
+    assert asked_again_after(answer, lifetime)
+
+
+def test_not_checked_is_never_cached() -> None:
+    cache = MemoryCache()
+
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider(fail=True)], cache=cache)
+
+    assert cache.entries == {}
+    assert asked_again_after(Lookup(Outcome.NOT_CHECKED, "VirusTotal answered with HTTP 500"), 0)
+
+
+def test_changing_the_decisive_engine_count_ignores_old_cached_answers() -> None:
+    stricter = replace(DEFAULT_SETTINGS, decisive_engines=5)
+
+    assert asked_again_after(LISTED, 0, settings=stricter)
+
+
+def test_the_report_says_when_a_cached_answer_was_fetched() -> None:
+    cache, clock = MemoryCache(), FakeClock()
+    clock.time = 1791397185.0  # 2026-10-07 18:19:45 UTC
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()], clock=clock, cache=cache)
+    clock.time += 3 * 60 * 60
+
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()], clock=clock, cache=cache)
+
+    assert [r.cached_at for r in report.lookups] == ["2026-10-07T18:19:45Z"] * 2
+
+
+def test_progress_marks_answers_taken_from_the_cache() -> None:
+    cache = MemoryCache()
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()], cache=cache)
+    events: list[Progress] = []
+
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()], cache=cache, on_progress=events.append)
+
+    assert events == [
+        LookupStarted(1, 2, "FakeIntel", Observable(ObservableKind.DOMAIN, "evil.example"), from_cache=True),
+        LookupStarted(2, 2, "FakeIntel", Observable(ObservableKind.URL, "https://evil.example/invoice"), from_cache=True),
+    ]
+
+
+def test_a_cached_answer_from_the_future_is_not_trusted() -> None:
+    # Stored while the computer's clock was a day fast: it could outlive its lifetime.
+    cache, clock = MemoryCache(), FakeClock()
+    clock.time += DAY
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()], clock=clock, cache=cache)
+    clock.time -= DAY
+    second = FakeProvider()
+
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[second], clock=clock, cache=cache)
+
+    assert len(second.received) == 2
