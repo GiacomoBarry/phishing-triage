@@ -1150,7 +1150,7 @@ def virustotal_answering(answers: dict[ObservableKind, Lookup]) -> FakeProvider:
 
 @pytest.mark.parametrize(
     ("kind", "label"),
-    [(ObservableKind.URL, "URL"), (ObservableKind.DOMAIN, "Domain"), (ObservableKind.SHA256, "SHA-256")],
+    [(ObservableKind.URL, "URL"), (ObservableKind.SHA256, "SHA-256")],
 )
 def test_virustotal_at_the_decisive_engine_count_is_decisive(kind: ObservableKind, label: str) -> None:
     virustotal = virustotal_answering({kind: Lookup(Outcome.MALICIOUS, "5 of 90 engines flag it as malicious")})
@@ -1218,4 +1218,25 @@ def test_an_attachment_virustotal_answered_for_can_be_clean() -> None:
     report = triage(load("benign_attachment.eml"), DEFAULT_SETTINGS, providers=[virustotal_answering({})])
 
     assert report.not_checked == []
+    assert report.verdict is Verdict.CLEAN
+
+
+def test_a_domain_many_virustotal_engines_flag_adds_points_but_is_never_decisive() -> None:
+    virustotal = virustotal_answering(
+        {ObservableKind.DOMAIN: Lookup(Outcome.SUSPICIOUS, "16 of 92 engines flag it as malicious")}
+    )
+
+    report = triage(VT_EMAIL, DEFAULT_SETTINGS, providers=[virustotal])
+
+    assert report.findings == [
+        Finding(
+            rule_id="virustotal_low_detections",
+            points=15,
+            decisive=False,
+            evidence=(
+                "VirusTotal flags Domain evil[.]example: 16 of 92 engines flag it as malicious."
+                " A domain is never decisive on its own, because shared platforms collect detections too."
+            ),
+        )
+    ]
     assert report.verdict is Verdict.CLEAN

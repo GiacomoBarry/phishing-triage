@@ -63,10 +63,10 @@ risky_extensions = [
     "html", "htm", "shtml", "svg",
 ]
 
-# VirusTotal: how many engines must flag a URL, domain or attachment as
-# malicious before it is a Decisive Finding (the Verdict is then malicious
-# whatever the Score). Fewer, but at least one, adds the
-# virustotal_low_detections points instead. Even google.com gets the odd
-# detection, so 1 would be far too jumpy.
+# VirusTotal: how many engines must flag a URL or attachment as malicious
+# before it is a Decisive Finding (the Verdict is then malicious whatever the
+# Score). Fewer, but at least one, adds the virustotal_low_detections points
+# instead. Even google.com gets the odd detection, so 1 would be far too
+# jumpy. A flagged domain only ever adds those points, never decides.
 [virustotal]
 decisive_engines = 3

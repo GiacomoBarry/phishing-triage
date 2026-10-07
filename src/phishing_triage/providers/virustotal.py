@@ -84,7 +84,9 @@ class VirusTotalProvider:
         if answered == 0:
             return Lookup(Outcome.UNKNOWN, "no engine gave an answer", evidence)
         detail = f"{malicious} of {answered} engines flag it as malicious"
-        if malicious >= self._decisive_engines:
+        # A domain is never decisive: shared platforms (github.com, even
+        # google.com) collect detections for what their users host (ADR 0007).
+        if malicious >= self._decisive_engines and kind is not ObservableKind.DOMAIN:
             return Lookup(Outcome.MALICIOUS, detail, evidence)
         if malicious > 0:
             return Lookup(Outcome.SUSPICIOUS, detail, evidence)

@@ -93,10 +93,9 @@ NEVER_SEEN_URL = Observable(ObservableKind.URL, "https://example.com/phishing-tr
     ("observable", "case", "detail"),
     [
         pytest.param(WICAR_URL, "url_detected", "19 of 93 engines flag it as malicious", id="URL"),
-        pytest.param(WICAR_DOMAIN, "domain_detected", "16 of 92 engines flag it as malicious", id="domain"),
     ],
 )
-def test_urls_and_domains_flagged_by_many_engines_are_malicious(
+def test_urls_flagged_by_many_engines_are_malicious(
     observable: Observable, case: str, detail: str
 ) -> None:
     lookup = look_up(observable, saved(case))
@@ -231,3 +230,10 @@ def test_no_engine_answering_is_unknown_not_clean(observable: Observable) -> Non
     lookup = look_up(observable, HttpResponse(200, body))
 
     assert (lookup.outcome, lookup.detail) == (Outcome.UNKNOWN, "no engine gave an answer")
+
+
+def test_a_domain_is_never_more_than_suspicious_however_many_engines_flag_it() -> None:
+    # Shared platforms collect detections too, so a domain alone is never decisive (ADR 0007).
+    lookup = look_up(WICAR_DOMAIN, saved("domain_detected"))
+
+    assert (lookup.outcome, lookup.detail) == (Outcome.SUSPICIOUS, "16 of 92 engines flag it as malicious")

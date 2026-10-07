@@ -227,24 +227,35 @@ def urlhaus_domain_listed(rule_input: RuleInput, settings: Settings) -> list[Fin
 
 
 def virustotal_low_detections(rule_input: RuleInput, settings: Settings) -> list[Finding]:
-    """Find Observables that some VirusTotal engines flag, but too few to be decisive.
+    """Find Observables that VirusTotal engines flag, but not decisively.
 
-    A weak signal, so it adds points rather than deciding the Verdict. One
-    Finding per Observable, so a flagged link and its flagged domain both count.
+    That's a URL or attachment flagged by fewer engines than the decisive
+    count, or a domain flagged by any number: a domain is never decisive on
+    its own (ADR 0007). One Finding per Observable, so a flagged link and its
+    flagged domain both count.
     """
-    return [
-        Finding(
-            rule_id=VIRUSTOTAL_LOW_DETECTIONS,
-            points=settings.points[VIRUSTOTAL_LOW_DETECTIONS],
-            decisive=False,
-            evidence=(
-                f"VirusTotal flags {LABELS[result.observable.kind]} {defanged(result.observable)}:"
-                f" {result.detail}, fewer than the {settings.decisive_engines} needed to be decisive."
-            ),
+    findings = []
+    for result in rule_input.lookups:
+        if result.provider != VIRUSTOTAL or result.outcome is not Outcome.SUSPICIOUS:
+            continue
+        if result.observable.kind is ObservableKind.DOMAIN:
+            why_not_decisive = (
+                ". A domain is never decisive on its own, because shared platforms collect detections too."
+            )
+        else:
+            why_not_decisive = f", fewer than the {settings.decisive_engines} needed to be decisive."
+        findings.append(
+            Finding(
+                rule_id=VIRUSTOTAL_LOW_DETECTIONS,
+                points=settings.points[VIRUSTOTAL_LOW_DETECTIONS],
+                decisive=False,
+                evidence=(
+                    f"VirusTotal flags {LABELS[result.observable.kind]} {defanged(result.observable)}:"
+                    f" {result.detail}{why_not_decisive}"
+                ),
+            )
         )
-        for result in rule_input.lookups
-        if result.provider == VIRUSTOTAL and result.outcome is Outcome.SUSPICIOUS
-    ]
+    return findings
 
 
 def _attachment_red_flags(attachment: Attachment, risky_extensions: tuple[str, ...]) -> list[str]:
