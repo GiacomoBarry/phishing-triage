@@ -27,6 +27,9 @@ class Settings:
     # Domains of URL shorteners, whose links hide their real destination.
     shortener_domains: tuple[str, ...]
 
+    # Urgency Phrases: wording that pressures the reader to act before thinking.
+    urgency_phrases: tuple[str, ...]
+
     # Attachment extensions (without the dot) that can run code or fake a web page.
     risky_extensions: tuple[str, ...]
 

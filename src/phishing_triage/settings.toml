@@ -16,6 +16,7 @@ reply_to_mismatch = 20
 display_name_impersonation = 25
 lookalike_domain = 30
 url_shortener = 10
+urgency_language = 10
 risky_attachment = 25
 urlhaus_domain_listed = 20
 virustotal_low_detections = 15
@@ -50,6 +51,30 @@ abuseipdb_high_confidence = 15
 domains = [
     "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly",
     "rebrand.ly", "cutt.ly", "shorturl.at", "tiny.cc", "rb.gy", "t.ly", "s.id",
+]
+
+# Urgency Phrases: wording that pressures the reader to act before thinking.
+# Any of these in the subject or body adds the urgency_language points once,
+# however many match. Case doesn't matter, and a phrase only matches as whole
+# words ("act now" doesn't match "contact now"). Single words such as
+# "urgent" are left out on purpose: genuine emails use them all the time.
+[urgency]
+phrases = [
+    # Threats to the account
+    "account suspended", "account has been suspended", "account will be suspended",
+    "account will be closed", "account has been locked", "account locked",
+    "account will be deactivated", "will be permanently deleted",
+    # Demands to act
+    "verify your account", "verify your identity", "confirm your identity",
+    "confirm your account", "update your payment", "update your billing",
+    "action required", "immediate action required", "act now", "respond immediately",
+    # Deadlines
+    "within 24 hours", "within 48 hours", "within 12 hours", "expires today",
+    "final notice", "final warning", "last chance", "failure to respond",
+    # Alarm
+    "unusual sign-in activity", "unusual activity", "suspicious activity",
+    "unauthorised access", "unauthorized access", "payment failed",
+    "your password expires", "your password will expire",
 ]
 
 # Attachments: extensions (without the dot) that can run code when opened,

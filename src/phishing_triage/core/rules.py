@@ -12,6 +12,7 @@ from phishing_triage.core.attachments import (
     previous_extension_of,
 )
 from phishing_triage.core.authentication import AuthenticationCheck
+from phishing_triage.core.body import readable_text
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookalike import imitated_domain, is_genuine
 from phishing_triage.core.observables import LABELS, ObservableKind, defanged
@@ -23,6 +24,7 @@ REPLY_TO_MISMATCH = "reply_to_mismatch"
 DISPLAY_NAME_IMPERSONATION = "display_name_impersonation"
 LOOKALIKE_DOMAIN = "lookalike_domain"
 URL_SHORTENER = "url_shortener"
+URGENCY_LANGUAGE = "urgency_language"
 RISKY_ATTACHMENT = "risky_attachment"
 KNOWN_MALICIOUS = "known_malicious"
 URLHAUS_DOMAIN_LISTED = "urlhaus_domain_listed"
@@ -163,6 +165,56 @@ def url_shortener(rule_input: RuleInput, settings: Settings) -> list[Finding]:
             evidence=described,
         )
     ]
+
+
+def urgency_language(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find Urgency Phrases, wording that pressures the reader to act before thinking.
+
+    The subject and body are searched here only and never sent anywhere.
+    One Finding for the whole email, quoting every phrase found and where.
+    """
+    places = {
+        "subject": _normalised(str(rule_input.message.get("Subject", ""))),
+        "body": _normalised(readable_text(rule_input.message)),
+    }
+    found = []
+    for place, text in places.items():
+        matched = [phrase for phrase in settings.urgency_phrases if _contains_phrase(text, phrase)]
+        # "action required" inside a matched "immediate action required" adds nothing.
+        longest = [
+            phrase
+            for phrase in matched
+            if not any(other != phrase and _contains_phrase(_normalised(other), phrase) for other in matched)
+        ]
+        found += [f'"{phrase}" ({place})' for phrase in longest]
+    if not found:
+        return []
+    label = "Urgency Phrase found" if len(found) == 1 else "Urgency Phrases found"
+    return [
+        Finding(
+            rule_id=URGENCY_LANGUAGE,
+            points=settings.points[URGENCY_LANGUAGE],
+            decisive=False,
+            evidence=f"{label}: {', '.join(found)}.",
+        )
+    ]
+
+
+def _contains_phrase(text: str, phrase: str) -> bool:
+    """Does `text` (already through _normalised) contain `phrase` as whole words,
+    ignoring case, spacing and apostrophe style?
+
+    "act now" matches "ACT NOW!" and "act\nnow", but not "contact now".
+    """
+    # (?<!\w) and (?!\w) mean "no letter or digit right before or after",
+    # which works even when a phrase starts or ends with punctuation.
+    pattern = rf"(?<!\w){re.escape(_normalised(phrase))}(?!\w)"
+    return re.search(pattern, text, re.IGNORECASE) is not None
+
+
+def _normalised(text: str) -> str:
+    """Text with curly apostrophes straightened and every run of spaces or line breaks made one space."""
+    return " ".join(text.replace("\u2019", "'").replace("\u2018", "'").split())
 
 
 def risky_attachment(rule_input: RuleInput, settings: Settings) -> list[Finding]:
@@ -439,6 +491,7 @@ BUILT_IN_RULES: tuple[Rule, ...] = (
     display_name_impersonation,
     lookalike_domain,
     url_shortener,
+    urgency_language,
     risky_attachment,
     known_malicious,
     urlhaus_domain_listed,

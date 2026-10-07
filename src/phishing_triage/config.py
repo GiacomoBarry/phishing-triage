@@ -130,6 +130,10 @@ def _looks_like_a_domain(value: Any) -> bool:
     )
 
 
+def _looks_like_a_phrase(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _looks_like_an_extension(value: Any) -> bool:
     return isinstance(value, str) and value.removeprefix(".").isalnum()
 
@@ -137,6 +141,7 @@ def _looks_like_an_extension(value: Any) -> bool:
 # How to check each item of a list setting, and how to describe it in an error.
 LIST_ITEM_CHECKS = {
     "domains": (_looks_like_a_domain, 'a list of domains, like ["example.com"]'),
+    "phrases": (_looks_like_a_phrase, 'a list of phrases, like ["verify your account"]'),
     "risky_extensions": (_looks_like_an_extension, 'a list of file extensions, like ["exe"]'),
     "trusted_relays": (_looks_like_a_domain, 'a list of mail server names, like ["mx.example.com"]'),
 }
@@ -154,6 +159,8 @@ def _build(data: dict[str, Any]) -> Settings:
         shortener_domains=tuple(
             domain.strip(".").lower() for domain in data["shorteners"]["domains"]
         ),
+        # Spacing and apostrophes are evened out when matching (core/rules.py).
+        urgency_phrases=tuple(data["urgency"]["phrases"]),
         risky_extensions=tuple(
             extension.removeprefix(".").lower()
             for extension in data["attachments"]["risky_extensions"]

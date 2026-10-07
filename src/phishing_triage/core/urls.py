@@ -6,10 +6,11 @@ so an attacker never learns the email is being looked at (ADR 0001).
 
 import html
 import re
-from collections.abc import Iterator
 from email.message import EmailMessage
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, parse_qs, urlsplit
+
+from phishing_triage.core.body import body_parts, text_of
 
 # A URL starts with http(s):// or www. and runs until a space, angle bracket or quote.
 URL_PATTERN = re.compile(r"\b(?:https?://|www\.)[^\s<>\"'`]+", re.IGNORECASE)
@@ -45,11 +46,11 @@ def find_urls(message: EmailMessage) -> list[str]:
     searched; image addresses are not, as they are mostly tracking pixels.
     """
     urls: list[str] = []
-    for part in _body_parts(message):
+    for part in body_parts(message):
         if part.get_content_type() == "text/html":
-            pieces = _html_pieces(_text_of(part))
+            pieces = _html_pieces(text_of(part))
         else:
-            pieces = [_text_of(part)]
+            pieces = [text_of(part)]
         for piece in pieces:
             urls += [_unwrap(url) for url in _urls_in_text(piece)]
     return list(dict.fromkeys(urls))
@@ -74,30 +75,6 @@ def defang_url(url: str) -> str:
 def defang_domain(domain: str) -> str:
     """Make a domain unclickable for display: evil.com becomes evil[.]com."""
     return domain.replace(".", "[.]")
-
-
-def _body_parts(part: EmailMessage) -> Iterator[EmailMessage]:
-    """Yield the plain-text and HTML body parts, skipping attachments entirely."""
-    if part.is_attachment():
-        return
-    if part.is_multipart():
-        for sub_part in part.iter_parts():
-            assert isinstance(sub_part, EmailMessage)  # guaranteed by policy.default
-            yield from _body_parts(sub_part)
-    elif part.get_content_type() in ("text/plain", "text/html"):
-        yield part
-
-
-def _text_of(part: EmailMessage) -> str:
-    """Return a body part's text, coping with a wrong or unknown character set."""
-    try:
-        content = part.get_content()
-        if isinstance(content, str):
-            return content
-    except (LookupError, UnicodeError):
-        pass
-    payload = part.get_payload(decode=True)
-    return payload.decode("utf-8", errors="replace") if isinstance(payload, bytes) else ""
 
 
 class _HtmlPieces(HTMLParser):

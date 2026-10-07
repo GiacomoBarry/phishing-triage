@@ -452,6 +452,7 @@ def email_with_body(
     html: str | None = None,
     from_header: str | None = "Alerts <alerts@example.org>",
     attachment: str | None = None,
+    subject: str = "Account notice",
 ) -> bytes:
     """An email with a plain-text body, an HTML body, or both, and an optional attachment.
 
@@ -461,7 +462,7 @@ def email_with_body(
     message = EmailMessage()
     if from_header is not None:
         message["From"] = from_header
-    message["Subject"] = "Account notice"
+    message["Subject"] = subject
     if plain is not None:
         message.set_content(plain)
     if html is not None:
@@ -2099,4 +2100,104 @@ def test_a_claimed_origin_nobody_checked_does_not_stop_a_clean_verdict() -> None
     # It is still listed, so the gap is visible.
     assert Observable(ObservableKind.CLAIMED_ORIGIN, "45.33.32.156") in [
         item.observable for item in report.not_checked
+    ]
+
+
+# --- Urgency language (ticket 05) ---
+
+
+def urgency_findings(raw: bytes, settings: Settings = DEFAULT_SETTINGS) -> list[Finding]:
+    report = triage(raw, settings, providers=[])
+    return [finding for finding in report.findings if finding.rule_id == "urgency_language"]
+
+
+def test_an_urgency_phrase_in_the_subject_gives_a_finding_quoting_it() -> None:
+    raw = email_with_headers("From: a@example.org", "Subject: Final notice: your parcel is waiting")
+
+    assert urgency_findings(raw) == [
+        Finding(
+            rule_id="urgency_language",
+            points=10,
+            decisive=False,
+            evidence='Urgency Phrase found: "final notice" (subject).',
+        )
+    ]
+
+
+def test_an_ordinary_email_gives_no_urgency_finding() -> None:
+    raw = email_with_body(plain="Hi team, the minutes from Tuesday are attached. Thanks, Jo")
+
+    assert urgency_findings(raw) == []
+
+
+@pytest.mark.parametrize(
+    ("plain", "html"),
+    [
+        pytest.param("Please VERIFY Your Account today.", None, id="plain body, mixed case"),
+        pytest.param(None, "<p>Please <b>verify your account</b> today.</p>", id="HTML body"),
+        pytest.param(None, "<p>Please verify&nbsp;your&#32;account today.</p>", id="HTML entities"),
+        pytest.param("Hello.", "<p>Please verify your account today.</p>", id="HTML alternative"),
+    ],
+)
+def test_an_urgency_phrase_in_the_body_gives_a_finding(plain: str | None, html: str | None) -> None:
+    raw = email_with_body(plain=plain, html=html)
+
+    assert [finding.evidence for finding in urgency_findings(raw)] == [
+        'Urgency Phrase found: "verify your account" (body).'
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param(email_with_body(plain="Hello.", attachment="Act now or your account will be closed."), id="attachment"),
+        pytest.param(email_with_body(html="<script>// act now</script><style>/* final notice */</style><p>Hi</p>"), id="script and style"),
+        pytest.param(email_with_body(plain="Please contact now-retired staff via HR."), id="phrase inside other words"),
+    ],
+)
+def test_attachments_scripts_and_parts_of_other_words_do_not_count(raw: bytes) -> None:
+    assert urgency_findings(raw) == []
+
+
+@pytest.mark.parametrize(
+    "plain",
+    [
+        pytest.param("Your account will be\nclosed unless you reply.", id="phrase across a line break"),
+        pytest.param("Your account  will   be closed.", id="extra spaces"),
+    ],
+)
+def test_phrases_match_however_the_text_is_spaced(plain: str) -> None:
+    assert rule_ids(urgency_findings(email_with_body(plain=plain))) == ["urgency_language"]
+
+
+def test_curly_and_straight_apostrophes_match_each_other() -> None:
+    settings = replace(DEFAULT_SETTINGS, urgency_phrases=("don't delay",))
+
+    raw = email_with_body(plain="Don’t delay, pay today.")
+
+    assert rule_ids(urgency_findings(raw, settings)) == ["urgency_language"]
+
+
+def test_several_phrases_give_one_finding_quoting_each_once() -> None:
+    raw = email_with_body(subject="Action required", plain="Your account suspended notice: act now. ACT NOW.")
+
+    assert urgency_findings(raw) == [
+        Finding(
+            rule_id="urgency_language",
+            points=10,
+            decisive=False,
+            evidence=(
+                'Urgency Phrases found: "action required" (subject),'
+                ' "account suspended" (body), "act now" (body).'
+            ),
+        )
+    ]
+
+
+
+def test_a_phrase_inside_a_longer_matched_phrase_is_not_quoted_twice() -> None:
+    raw = email_with_body(subject="Immediate action required", plain="Hello.")
+
+    assert [finding.evidence for finding in urgency_findings(raw)] == [
+        'Urgency Phrase found: "immediate action required" (subject).'
     ]

@@ -98,6 +98,10 @@ _Avoid_: Alert, hit, flag, indicator
 A check for one red flag in an email. When it fires, it produces a Finding.
 _Avoid_: Detector, signature, check
 
+**Urgency Phrase**:
+Wording that pressures the reader to act before thinking, such as "verify your account" or "within 24 hours". Kept in an editable list in settings; any in the subject or body adds points once per email.
+_Avoid_: Urgency keyword, trigger word, pressure word
+
 **Decisive Finding**:
 A Finding strong enough to make the Verdict malicious on its own, whatever the Score.
 _Avoid_: Override, critical finding

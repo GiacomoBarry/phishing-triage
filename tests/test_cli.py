@@ -24,11 +24,12 @@ VALID_SETTINGS = (
     "[verdict]\nsuspicious_from = 30\nmalicious_from = 60\n"
     "[points]\nreply_to_mismatch = 20\n"
     "display_name_impersonation = 25\nlookalike_domain = 30\nurl_shortener = 10\n"
-    "risky_attachment = 25\nurlhaus_domain_listed = 20\nvirustotal_low_detections = 15\n"
+    "urgency_language = 10\nrisky_attachment = 25\nurlhaus_domain_listed = 20\nvirustotal_low_detections = 15\n"
     "newly_registered_domain = 20\ndmarc_fail = 20\nspf_fail = 10\ndkim_fail = 10\n"
     "abuseipdb_high_confidence = 15\n"
     '[brands]\n"PayPal" = ["paypal.com"]\n'
     '[shorteners]\ndomains = ["bit.ly"]\n'
+    '[urgency]\nphrases = ["final notice"]\n'
     '[attachments]\nrisky_extensions = ["exe", ".js"]\n'
     "[virustotal]\ndecisive_engines = 3\n"
     "[lookups]\nurl_cap = 10\n"
@@ -242,6 +243,16 @@ def test_settings_option_loads_an_edited_settings_file(
             VALID_SETTINGS.replace('domains = ["bit.ly"]', 'domains = ["bitly"]'),
             "shorteners.domains must be a list of domains",
             id="shortener without a dot",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace('phrases = ["final notice"]', 'phrases = "final notice"'),
+            'urgency.phrases must be a list of phrases, like ["verify your account"]',
+            id="phrases not a list",
+        ),
+        pytest.param(
+            VALID_SETTINGS.replace('phrases = ["final notice"]', 'phrases = ["final notice", "  "]'),
+            "urgency.phrases must be a list of phrases",
+            id="blank phrase",
         ),
         pytest.param(
             VALID_SETTINGS.replace('["exe", ".js"]', '["exe", "pdf.exe"]'),
