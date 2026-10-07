@@ -1,26 +1,23 @@
 """The Incident Note: a plain-text summary of a Triage Report for a ticket.
 
 Generating it is a pure function: it only reads the report.
-More sections (Not Checked, Recommended Actions) arrive in later tickets.
+Recommended Actions arrive in a later ticket.
 """
 
 from phishing_triage.core.attachments import display_filename
 from phishing_triage.core.findings import Finding
-from phishing_triage.core.observables import Observable, ObservableKind
+from phishing_triage.core.observables import LABELS, Observable, ObservableKind, defanged
 from phishing_triage.core.report import TriageReport
-from phishing_triage.core.urls import defang_domain, defang_url
-
-# How each kind of Observable is labelled in the Observables section.
-OBSERVABLE_LABELS = {
-    ObservableKind.URL: "URL",
-    ObservableKind.DOMAIN: "Domain",
-    ObservableKind.SHA256: "SHA-256",
-}
 
 
 def incident_note(report: TriageReport) -> str:
     """Return the Incident Note for a Triage Report, ready to paste into a ticket."""
-    sections = [_summary_line(report), _key_findings(report), _observables(report)]
+    sections = [
+        _summary_line(report),
+        _key_findings(report),
+        _observables(report),
+        _not_checked(report),
+    ]
     return "\n\n".join(sections) + "\n"
 
 
@@ -56,18 +53,29 @@ def _observables(report: TriageReport) -> str:
     return "\n".join(lines)
 
 
-def _observable_line(observable: Observable, report: TriageReport) -> str:
-    """One Observable, made safe to paste: URLs and domains defanged, hashes named."""
-    label = OBSERVABLE_LABELS[observable.kind]
-    if observable.kind is ObservableKind.URL:
-        return f"{label}: {defang_url(observable.value)}"
-    if observable.kind is ObservableKind.DOMAIN:
-        return f"{label}: {defang_domain(observable.value)}"
-    # A hash isn't clickable, so it needs no defanging. Name the file(s) it belongs to.
-    filenames = [
-        display_filename(a.filename) for a in report.attachments if a.sha256 == observable.value
+def _not_checked(report: TriageReport) -> str:
+    """What no Provider checked, and why, so gaps are never mistaken for clean."""
+    lines = ["Not Checked:"]
+    if report.cap_reason:
+        lines.append(report.cap_reason)
+    lines += [
+        f"- {_observable_line(item.observable, report)}: {'; '.join(item.reasons)}"
+        for item in report.not_checked
     ]
-    return f"{label}: {observable.value} ({', '.join(filenames)})"
+    if not report.not_checked:
+        lines.append("- Nothing: every Observable was checked by at least one Provider.")
+    return "\n".join(lines)
+
+
+def _observable_line(observable: Observable, report: TriageReport) -> str:
+    """One Observable, made safe to paste, with its filename(s) if it's a hash."""
+    line = f"{LABELS[observable.kind]}: {defanged(observable)}"
+    if observable.kind is ObservableKind.SHA256:
+        filenames = [
+            display_filename(a.filename) for a in report.attachments if a.sha256 == observable.value
+        ]
+        line += f" ({', '.join(filenames)})"
+    return line
 
 
 def describe_finding(finding: Finding) -> str:

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 
 from phishing_triage.core.attachments import Attachment
+from phishing_triage.core.lookups import LookupResult
 from phishing_triage.core.observables import Observable, ObservableKind
 from phishing_triage.core.settings import Settings
 
@@ -21,11 +22,12 @@ class Finding:
 
 @dataclass(frozen=True)
 class RuleInput:
-    """Everything a rule is given to look at. Lookup results join it in a later ticket."""
+    """Everything a rule is given to look at."""
 
     message: EmailMessage
     observables: list[Observable]
     attachments: list[Attachment]
+    lookups: list[LookupResult]
 
     def values(self, kind: ObservableKind) -> list[str]:
         """The values of every Observable of one kind, in the order they were found."""

@@ -1,12 +1,65 @@
-"""The Provider interface.
+"""The Provider interface, and what a Reputation Lookup can come back with.
 
 A Provider is an outside source a Reputation Lookup is made against.
-Providers are always passed in to the core, never created inside it.
-The interface is filled in when the first real Provider arrives (ticket 09).
+Providers are always built outside the core and passed in, so the core never
+reads API keys or makes network calls itself, and tests can pass fakes.
 """
 
-from typing import Protocol
+from collections.abc import Set
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any, Protocol
+
+from phishing_triage.core.observables import Observable, ObservableKind
+
+
+# Names of Providers that a rule needs to recognise.
+URLHAUS = "URLhaus"
+
+
+class Outcome(StrEnum):
+    """What one Reputation Lookup concluded."""
+
+    MALICIOUS = "malicious"
+    SUSPICIOUS = "suspicious"
+    CLEAN = "clean"
+    # The Provider was asked and has no record. Never the same as clean.
+    UNKNOWN = "unknown"
+    # The lookup never happened (no key, an error, a timeout...).
+    NOT_CHECKED = "not_checked"
+
+
+@dataclass(frozen=True)
+class Lookup:
+    """What a Provider says about one Observable.
+
+    `detail` explains the outcome in a few words: why it's malicious or
+    suspicious, or, for Not Checked, the reason. `evidence` keeps the useful
+    parts of the Provider's raw answer for the Triage Report.
+    """
+
+    outcome: Outcome
+    detail: str = ""
+    evidence: dict[str, Any] = field(default_factory=dict)
 
 
 class Provider(Protocol):
-    """An outside source a Reputation Lookup is made against."""
+    """An outside source a Reputation Lookup is made against.
+
+    Its only action is `lookup`: asking what it already knows. There is
+    deliberately no way to submit or scan anything (ADR 0001).
+    """
+
+    @property
+    def name(self) -> str:
+        """The Provider's name as shown to analysts, such as "URLhaus"."""
+        ...
+
+    @property
+    def handles(self) -> Set[ObservableKind]:
+        """The kinds of Observable this Provider can look up."""
+        ...
+
+    def lookup(self, observable: Observable) -> Lookup:
+        """Look one Observable up. Problems should come back as Not Checked, not raise."""
+        ...

@@ -12,6 +12,7 @@ from typing import Any
 
 from phishing_triage.core.attachments import Attachment
 from phishing_triage.core.findings import Finding
+from phishing_triage.core.lookups import LookupResult, NotChecked
 from phishing_triage.core.observables import Observable
 
 FORMAT_VERSION = 1
@@ -46,10 +47,17 @@ class TriageReport:
     # Each attachment, described without opening it.
     attachments: list[Attachment]
 
-    # The outcome.
+    # Every Reputation Lookup made, and the Observables no Provider answered for.
+    lookups: list[LookupResult]
+    not_checked: list[NotChecked]
+
+    # The outcome. The Verdict may have been raised from clean because
+    # something was Not Checked; `verdict_before_cap` and `cap_reason` show that.
     findings: list[Finding]
     score: int
     verdict: Verdict
+    verdict_before_cap: Verdict
+    cap_reason: str
     warnings: list[str] = field(default_factory=list)
 
     # Reserved for MITRE ATT&CK mapping in a later phase.
@@ -61,4 +69,5 @@ class TriageReport:
         data = asdict(self)
         data["analysed_at"] = self.analysed_at.isoformat()
         data["verdict"] = str(self.verdict)
+        data["verdict_before_cap"] = str(self.verdict_before_cap)
         return data

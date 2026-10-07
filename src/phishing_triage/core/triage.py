@@ -12,12 +12,13 @@ from importlib.metadata import version
 from phishing_triage.core.attachments import extract_attachments
 from phishing_triage.core.errors import UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
+from phishing_triage.core.lookups import find_not_checked, run_lookups
 from phishing_triage.core.observables import extract_observables
 from phishing_triage.core.providers import Provider
 from phishing_triage.core.report import TriageReport
 from phishing_triage.core.rules import BUILT_IN_RULES
 from phishing_triage.core.settings import Settings
-from phishing_triage.core.verdict import score_and_verdict
+from phishing_triage.core.verdict import cap_for_missing_evidence, score_and_verdict
 
 TOOL_VERSION = version("phishing-triage")
 
@@ -50,12 +51,17 @@ def triage(
 
     attachments = extract_attachments(message)
     observables = extract_observables(message, attachments)
-    rule_input = RuleInput(message=message, observables=observables, attachments=attachments)
+    lookups = run_lookups(observables, providers)
+    rule_input = RuleInput(
+        message=message, observables=observables, attachments=attachments, lookups=lookups
+    )
 
     findings: list[Finding] = []
     for rule in rules:
         findings += rule(rule_input, settings)
-    score, verdict = score_and_verdict(findings, settings)
+    score, verdict_before_cap = score_and_verdict(findings, settings)
+    not_checked = find_not_checked(observables, lookups)
+    verdict, cap_reason = cap_for_missing_evidence(verdict_before_cap, not_checked)
 
     return TriageReport(
         report_id=str(uuid.uuid4()),
@@ -67,9 +73,13 @@ def triage(
         subject=str(message.get("Subject", "")),
         observables=observables,
         attachments=attachments,
+        lookups=lookups,
+        not_checked=not_checked,
         findings=findings,
         score=score,
         verdict=verdict,
+        verdict_before_cap=verdict_before_cap,
+        cap_reason=cap_reason,
         warnings=warnings,
     )
 

@@ -36,6 +36,13 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Unicode categories**: every character has a category; "Cf" (format) covers invisible ones like the right-to-left override, and "C*" covers all control characters (`has_hidden_characters` and `display_filename` in `core/attachments.py`).
 - **Escaping output**: printing risky characters as visible codes (`\u202e`) so input can't scramble the display (`display_filename` in `core/attachments.py`).
 - **Lookup table of functions**: a dict mapping a setting's name to the function that checks it (`LIST_ITEM_CHECKS` in `config.py`).
+- **Environment variables and `.env` files**: secrets are read from the environment, which `python-dotenv` fills from a git-ignored `.env` file (`_real_providers` in `cli.py`, `build_providers` in `providers/__init__.py`).
+- **Protocol with properties**: a Provider's interface says it must have a `name` and `handles` that can be read, and a `lookup` method; any class with those fits (`Provider` in `core/providers.py`).
+- **HTTP requests with `urllib`**: building a POST request with a form body and headers, and reading the status and body (`UrllibTransport` in `providers/transport.py`).
+- **Parsing JSON**: `json.loads` turns a Provider's text answer into Python dicts and lists; anything unexpected becomes Not Checked (`URLhausProvider.lookup` in `providers/urlhaus.py`).
+- **Fake transport (test double)**: a stand-in object with the same shape as the real one, returning saved real responses, so Provider code is tested without the network (`FakeTransport` in `tests/test_urlhaus.py`).
+- **Catching broad exceptions on purpose**: one place catches every error so a buggy Provider can't crash the run, and records it instead (`_look_up` in `core/lookups.py`).
+- **Spying on attribute access**: overriding `__getattribute__` in a test to record which methods the core touches, proving it only ever calls `lookup` (`test_the_core_only_ever_asks_providers_to_look_up` in `tests/test_triage.py`).
 - **Pure function**: the output depends only on the input and nothing else changes (`incident_note()` in `core/incident_note.py`).
 - **Dataclass**: a class that mainly holds data, with the boilerplate generated for you; `frozen=True` makes it read-only (`TriageReport` in `core/report.py`, `Settings` in `core/settings.py`).
 - **Enum (StrEnum, IntEnum)**: a fixed set of named choices; a `StrEnum` member is also a string, so it turns into JSON easily (`Verdict` in `core/report.py`), and an `IntEnum` member is also a number, so it can be an exit code (`ExitCode` in `cli.py`).

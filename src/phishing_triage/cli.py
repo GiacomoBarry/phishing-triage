@@ -7,22 +7,29 @@ exit code that scripts can react to.
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from enum import IntEnum
 from pathlib import Path
 from typing import NoReturn
 
+from dotenv import load_dotenv
+
 from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
+    LABELS,
+    Provider,
     TriageReport,
     UnparseableEmailError,
     Verdict,
+    defanged,
     describe_finding,
     display_filename,
     incident_note,
     triage,
 )
+from phishing_triage.providers import build_providers
 
 REPORTS_DIR = Path("reports")
 
@@ -55,8 +62,12 @@ class _ArgumentParser(argparse.ArgumentParser):
         self.exit(ExitCode.USAGE_ERROR, f"{self.prog}: error: {message}\n")
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the CLI and return the exit code."""
+def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None = None) -> int:
+    """Run the CLI and return the exit code.
+
+    `providers` defaults to the real ones, with API keys from the environment
+    or a .env file in the current folder. Tests pass fakes instead.
+    """
     args = _parse_args(argv)
     email_path = Path(args.email)
 
@@ -73,7 +84,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return ExitCode.UNREADABLE_FILE
 
     try:
-        report = triage(raw_email, settings, providers=[])
+        if providers is None:
+            providers = _real_providers()
+        report = triage(raw_email, settings, providers)
     except UnparseableEmailError as error:
         _print_error(f"{email_path} is not a parseable email. {error}")
         return ExitCode.UNPARSEABLE_EMAIL
@@ -93,6 +106,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Triage Report saved to {saved_path}", file=sys.stderr)
 
     return VERDICT_EXIT_CODES[report.verdict]
+
+
+def _real_providers() -> list[Provider]:
+    """Build the real Providers, reading API keys from .env (if present) and the environment.
+
+    Keys already set in the environment win over the .env file.
+    """
+    load_dotenv(Path(".env"))
+    return build_providers(os.environ)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -134,6 +156,8 @@ def _readable_view(report: TriageReport) -> str:
         f"From:     {sender}",
         f"Subject:  {report.subject or '(no subject)'}",
     ]
+    if report.cap_reason:
+        lines.append(f"Capped:   {report.cap_reason}")
     lines += [f"Warning:  {warning}" for warning in report.warnings]
     lines += ["", "Attachments:"]
     for attachment in report.attachments:
@@ -146,6 +170,14 @@ def _readable_view(report: TriageReport) -> str:
         ]
     if not report.attachments:
         lines.append("  - None.")
+    lines += ["", "Reputation Lookups:"]
+    lines += [
+        f"  - {result.provider}: {LABELS[result.observable.kind]} {defanged(result.observable)}"
+        f" -> {result.outcome.replace('_', ' ')}" + (f" ({result.detail})" if result.detail else "")
+        for result in report.lookups
+    ]
+    if not report.lookups:
+        lines.append("  - None made.")
     lines += ["", "Findings:"]
     lines += [f"  - {describe_finding(finding)}" for finding in report.findings]
     if not report.findings:

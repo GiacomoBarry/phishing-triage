@@ -7,7 +7,9 @@ authors = [
     { name = "Jack", email = "181964304+GiacomoBarry@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "python-dotenv>=1.2.4",
+]
 
 [project.scripts]
 phishing-triage = "phishing_triage.cli:main"

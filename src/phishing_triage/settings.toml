@@ -9,12 +9,15 @@ suspicious_from = 30
 malicious_from = 60
 
 # Points each Finding adds to the Score. The Score is capped at 100.
+# Decisive Findings (such as a URL listed on URLhaus) need no points: they
+# make the Verdict malicious on their own.
 [points]
 reply_to_mismatch = 20
 display_name_impersonation = 25
 lookalike_domain = 30
 url_shortener = 10
 risky_attachment = 25
+urlhaus_domain_listed = 20
 
 # Protected Brands: names attackers pretend to be. Each line is a brand name,
 # as it would appear in a display name, and the domains genuinely theirs.

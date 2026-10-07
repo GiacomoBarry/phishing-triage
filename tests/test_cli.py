@@ -6,11 +6,13 @@ the core seam, not here.
 """
 
 import json
+import socket
 from pathlib import Path
 
 import pytest
 
 from phishing_triage.cli import main
+from phishing_triage.core import Lookup, Observable, ObservableKind, Outcome
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CLEAN_EMAIL = str(FIXTURES / "clean_newsletter.eml")
@@ -22,7 +24,7 @@ VALID_SETTINGS = (
     "[verdict]\nsuspicious_from = 30\nmalicious_from = 60\n"
     "[points]\nreply_to_mismatch = 20\n"
     "display_name_impersonation = 25\nlookalike_domain = 30\nurl_shortener = 10\n"
-    "risky_attachment = 25\n"
+    "risky_attachment = 25\nurlhaus_domain_listed = 20\n"
     '[brands]\n"PayPal" = ["paypal.com"]\n'
     '[shorteners]\ndomains = ["bit.ly"]\n'
     '[attachments]\nrisky_extensions = ["exe", ".js"]\n'
@@ -40,8 +42,22 @@ def write_settings(tmp_path: Path, reply_to_points: int) -> str:
 
 @pytest.fixture(autouse=True)
 def work_in_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run each test from an empty folder so saved reports land somewhere disposable."""
+    """Run each test from an empty folder so saved reports land somewhere disposable.
+
+    The empty folder also has no .env, and API keys are removed from the
+    environment, so the real Providers answer Not Checked ("no API key").
+    The network is blocked too, so a test can never make a real lookup.
+    """
     monkeypatch.chdir(tmp_path)
+    for name in ("URLHAUS_AUTH_KEY", "VIRUSTOTAL_API_KEY", "ABUSEIPDB_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("network access attempted")
+
+    monkeypatch.setattr(socket, "socket", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
 
 
 def saved_reports(tmp_path: Path) -> list[Path]:
@@ -279,3 +295,34 @@ def test_readable_view_lists_attachments_with_all_three_hashes(
     assert "SHA-256: 56466756b631879f95cb959987c9d36c3581d1f12d37914d50e73f5d7d99ceff" in out
     assert "MD5:     21ef88c005f99434769f4cc4ca2de563" in out
     assert "SHA-1:   0302994af3ee7c69191e3897ebae59a306519baa" in out
+
+
+class ListsEverything:
+    """A fake Provider that reports every URL as malicious."""
+
+    name = "FakeIntel"
+    handles = frozenset({ObservableKind.URL})
+
+    def lookup(self, observable: Observable) -> Lookup:
+        return Lookup(Outcome.MALICIOUS, "listed for testing")
+
+
+def test_fake_providers_can_be_passed_in_and_drive_the_exit_code(tmp_path: Path) -> None:
+    email_path = tmp_path / "link.eml"
+    email_path.write_text("From: a@example.org\nSubject: Hi\n\nhttps://evil.example/x\n")
+
+    assert main([str(email_path)], providers=[ListsEverything()]) == 2
+
+
+def test_without_api_keys_links_are_not_checked_so_the_email_cannot_be_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email_path = tmp_path / "link.eml"
+    email_path.write_text("From: a@example.org\nSubject: Hi\n\nhttps://evil.example/x\n")
+
+    exit_code = main([str(email_path)])
+
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Capped:   Raised from clean to suspicious" in out
+    assert "URLhaus: URL hxxps://evil[.]example/x -> not checked (no API key)" in out

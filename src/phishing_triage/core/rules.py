@@ -12,7 +12,8 @@ from phishing_triage.core.attachments import (
 )
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookalike import imitated_domain, is_genuine
-from phishing_triage.core.observables import ObservableKind
+from phishing_triage.core.observables import LABELS, ObservableKind, defanged
+from phishing_triage.core.providers import URLHAUS, Outcome
 from phishing_triage.core.settings import Settings
 from phishing_triage.core.urls import defang_url, host_of
 
@@ -21,6 +22,8 @@ DISPLAY_NAME_IMPERSONATION = "display_name_impersonation"
 LOOKALIKE_DOMAIN = "lookalike_domain"
 URL_SHORTENER = "url_shortener"
 RISKY_ATTACHMENT = "risky_attachment"
+KNOWN_MALICIOUS = "known_malicious"
+URLHAUS_DOMAIN_LISTED = "urlhaus_domain_listed"
 
 # Extensions a "double extension" hides behind: the part the reader is meant
 # to notice in a name like invoice.pdf.exe.
@@ -179,6 +182,49 @@ def risky_attachment(rule_input: RuleInput, settings: Settings) -> list[Finding]
     ]
 
 
+def known_malicious(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Turn every malicious Reputation Lookup into a Decisive Finding.
+
+    A Provider confirming an Observable is malicious (a URL listed on
+    URLhaus, for example) makes the Verdict malicious whatever the Score
+    (ADR 0002). Decisive Findings carry no points.
+    """
+    return [
+        Finding(
+            rule_id=KNOWN_MALICIOUS,
+            points=0,
+            decisive=True,
+            evidence=(
+                f"{result.provider} reports {LABELS[result.observable.kind]}"
+                f" {defanged(result.observable)} as malicious: {result.detail}."
+            ),
+        )
+        for result in rule_input.lookups
+        if result.outcome is Outcome.MALICIOUS
+    ]
+
+
+def urlhaus_domain_listed(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find link domains hosting URLs that URLhaus lists as malicious.
+
+    Not decisive, because shared platforms such as github.com host listed
+    URLs too: only a listed URL itself is decisive (ADR 0005). One Finding
+    per domain.
+    """
+    return [
+        Finding(
+            rule_id=URLHAUS_DOMAIN_LISTED,
+            points=settings.points[URLHAUS_DOMAIN_LISTED],
+            decisive=False,
+            evidence=f"URLhaus lists malicious URLs on domain {defanged(result.observable)}: {result.detail}.",
+        )
+        for result in rule_input.lookups
+        if result.provider == URLHAUS
+        and result.observable.kind is ObservableKind.DOMAIN
+        and result.outcome is Outcome.SUSPICIOUS
+    ]
+
+
 def _attachment_red_flags(attachment: Attachment, risky_extensions: tuple[str, ...]) -> list[str]:
     """Each reason an attachment looks dangerous, worded to follow its name."""
     reasons = []
@@ -240,4 +286,6 @@ BUILT_IN_RULES: tuple[Rule, ...] = (
     lookalike_domain,
     url_shortener,
     risky_attachment,
+    known_malicious,
+    urlhaus_domain_listed,
 )

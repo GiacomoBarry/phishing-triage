@@ -4,8 +4,9 @@ import builtins
 import io
 import os
 import socket
-import zipfile
 import urllib.request
+import zipfile
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from email.message import EmailMessage
@@ -15,11 +16,17 @@ from uuid import UUID
 import pytest
 
 from phishing_triage.config import load_settings
+from phishing_triage.providers.transport import HttpResponse
+from phishing_triage.providers.urlhaus import URLhausProvider
 from phishing_triage.core import (
+    URLHAUS,
     Attachment,
     Finding,
+    Lookup,
+    NotChecked,
     Observable,
     ObservableKind,
+    Outcome,
     RuleInput,
     Settings,
     UnparseableEmailError,
@@ -223,6 +230,9 @@ def test_incident_note_lists_key_findings_with_evidence() -> None:
         "\n"
         "Observables (defanged):\n"
         "- None.\n"
+        "\n"
+        "Not Checked:\n"
+        "- Nothing: every Observable was checked by at least one Provider.\n"
     )
 
 
@@ -651,13 +661,13 @@ def test_incident_note_lists_observables_defanged_and_nothing_clickable() -> Non
 
     note = incident_note(triage(raw, DEFAULT_SETTINGS, providers=[]))
 
-    assert note.endswith(
+    assert (
         "Observables (defanged):\n"
         "- URL: hxxps://bit[.]ly/abc\n"
         "- URL: hxxp://evil[.]example/login.php\n"
         "- Domain: bit[.]ly\n"
         "- Domain: evil[.]example\n"
-    )
+    ) in note
     assert "http" not in note
 
 
@@ -876,3 +886,241 @@ def test_attachments_are_never_written_to_disk_or_unpacked(
     report = triage(raw, DEFAULT_SETTINGS, providers=[])
 
     assert report.attachments[1].password_protected
+
+
+# --- Provider framework, URLhaus, and "clean requires evidence" (ticket 09) ---
+
+ALL_KINDS = frozenset(ObservableKind)
+URL_AND_DOMAIN = frozenset({ObservableKind.URL, ObservableKind.DOMAIN})
+
+
+class FakeProvider:
+    """A Provider with canned answers that records what it was asked.
+
+    It answers `default` unless `answers` has an entry for the value, and
+    raises if `fail` is set. It has submit and scan methods that fail the
+    test if ever called, standing in for the endpoints ADR 0001 forbids.
+    """
+
+    def __init__(
+        self,
+        name: str = "FakeIntel",
+        handles: frozenset[ObservableKind] = URL_AND_DOMAIN,
+        default: Lookup = Lookup(Outcome.UNKNOWN, "not listed"),
+        answers: dict[str, Lookup] | None = None,
+        fail: bool = False,
+    ) -> None:
+        self._name = name
+        self._handles = handles
+        self.default = default
+        self.answers = answers or {}
+        self.fail = fail
+        self.received: list[Observable] = []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def handles(self) -> frozenset[ObservableKind]:
+        return self._handles
+
+    def lookup(self, observable: Observable) -> Lookup:
+        self.received.append(observable)
+        if self.fail:
+            raise RuntimeError("service exploded")
+        return self.answers.get(observable.value, self.default)
+
+    def submit(self, *args: object) -> None:
+        raise AssertionError("a Provider was asked to submit something (ADR 0001)")
+
+    def scan(self, *args: object) -> None:
+        raise AssertionError("a Provider was asked to scan something (ADR 0001)")
+
+
+class UnusedTransport:
+    """A transport for a URLhaus Provider with no key, which must never send anything."""
+
+    def post(self, url: str, form: Mapping[str, str], headers: Mapping[str, str]) -> HttpResponse:
+        raise AssertionError("nothing should be sent without an API key")
+
+
+LINK_EMAIL = email_with_body(plain="Your invoice: https://evil.example/invoice")
+LISTED = Lookup(Outcome.MALICIOUS, "listed as malware_download, currently online")
+
+
+def test_a_malicious_lookup_is_a_decisive_finding() -> None:
+    provider = FakeProvider(answers={"https://evil.example/invoice": LISTED})
+
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[provider])
+
+    assert report.findings == [
+        Finding(
+            rule_id="known_malicious",
+            points=0,
+            decisive=True,
+            evidence=(
+                "FakeIntel reports URL hxxps://evil[.]example/invoice as malicious:"
+                " listed as malware_download, currently online."
+            ),
+        )
+    ]
+    assert report.verdict is Verdict.MALICIOUS
+
+
+def test_unknown_everywhere_can_still_be_clean() -> None:
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()])
+
+    assert report.verdict is Verdict.CLEAN
+    assert report.not_checked == []
+    assert report.cap_reason == ""
+    assert [(r.provider, r.observable.value, r.outcome) for r in report.lookups] == [
+        ("FakeIntel", "https://evil.example/invoice", Outcome.UNKNOWN),
+        ("FakeIntel", "evil.example", Outcome.UNKNOWN),
+    ]
+    assert report.to_dict()["lookups"][0] == {
+        "provider": "FakeIntel",
+        "observable": {"kind": "url", "value": "https://evil.example/invoice"},
+        "outcome": "unknown",
+        "detail": "not listed",
+        "evidence": {},
+    }
+
+
+def test_a_link_nobody_checked_raises_clean_to_suspicious() -> None:
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[])
+
+    assert report.verdict_before_cap is Verdict.CLEAN
+    assert report.verdict is Verdict.SUSPICIOUS
+    assert report.cap_reason == (
+        "Raised from clean to suspicious: 1 URL or attachment was Not Checked,"
+        " so there isn't the evidence to call this email clean."
+    )
+    assert report.to_dict()["verdict_before_cap"] == "clean"
+
+
+def test_missing_api_key_is_not_checked_and_the_run_continues() -> None:
+    urlhaus = URLhausProvider(auth_key=None, transport=UnusedTransport())
+
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[urlhaus])
+
+    assert report.not_checked == [
+        NotChecked(Observable(ObservableKind.URL, "https://evil.example/invoice"), ["URLhaus: no API key"]),
+        NotChecked(Observable(ObservableKind.DOMAIN, "evil.example"), ["URLhaus: no API key"]),
+    ]
+    assert report.verdict is Verdict.SUSPICIOUS
+
+
+def test_a_failing_provider_is_not_checked_never_a_crash() -> None:
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider(fail=True)])
+
+    assert report.not_checked[0].reasons == [
+        "FakeIntel: the Provider failed (RuntimeError: service exploded)"
+    ]
+    assert report.verdict is Verdict.SUSPICIOUS
+
+
+def test_one_provider_answering_is_enough_evidence() -> None:
+    providers = [FakeProvider(name="Down", fail=True), FakeProvider(name="Up")]
+
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=providers)
+
+    assert report.not_checked == []
+    assert report.verdict is Verdict.CLEAN
+
+
+def test_unchecked_domains_alone_dont_raise_the_verdict() -> None:
+    urls_only = FakeProvider(handles=frozenset({ObservableKind.URL}))
+
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[urls_only])
+
+    assert [n.observable.kind for n in report.not_checked] == [ObservableKind.DOMAIN]
+    assert report.not_checked[0].reasons == ["no Provider looks this kind of Observable up yet"]
+    assert report.verdict is Verdict.CLEAN
+
+
+def test_an_attachment_nobody_checked_raises_clean_to_suspicious() -> None:
+    report = triage(load("benign_attachment.eml"), DEFAULT_SETTINGS, providers=[FakeProvider()])
+
+    assert report.findings == []
+    assert report.verdict is Verdict.SUSPICIOUS
+    assert [n.observable.kind for n in report.not_checked] == [ObservableKind.SHA256]
+
+
+def test_the_cap_only_ever_raises_clean() -> None:
+    raw = email_with_body(plain="https://paypa1.com/login https://rnicrosoft.com/x")  # 60 points
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert report.verdict is report.verdict_before_cap is Verdict.MALICIOUS
+    assert report.cap_reason == ""
+
+
+def test_urlhaus_domain_listing_adds_points_but_is_not_decisive() -> None:
+    urlhaus = FakeProvider(
+        name=URLHAUS,
+        answers={"evil.example": Lookup(Outcome.SUSPICIOUS, "3 malicious URLs listed, 1 still online")},
+    )
+
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[urlhaus])
+
+    assert report.findings == [
+        Finding(
+            rule_id="urlhaus_domain_listed",
+            points=20,
+            decisive=False,
+            evidence=(
+                "URLhaus lists malicious URLs on domain evil[.]example:"
+                " 3 malicious URLs listed, 1 still online."
+            ),
+        )
+    ]
+    assert report.verdict is Verdict.CLEAN
+
+
+def test_incident_note_lists_what_was_not_checked_and_why() -> None:
+    raw = email_with_body(plain="https://evil.example/invoice", attachment="notes")
+    urlhaus = URLhausProvider(auth_key=None, transport=UnusedTransport())
+
+    note = incident_note(triage(raw, DEFAULT_SETTINGS, providers=[urlhaus]))
+
+    not_checked = note.split("Not Checked:\n")[1]
+    assert not_checked.startswith("Raised from clean to suspicious: 2 URLs or attachments were Not Checked")
+    assert "- URL: hxxps://evil[.]example/invoice: URLhaus: no API key\n" in not_checked
+    assert "- Domain: evil[.]example: URLhaus: no API key\n" in not_checked
+    assert "(notes.txt): no Provider looks this kind of Observable up yet\n" in not_checked
+    assert "http" not in note
+
+
+def test_providers_never_receive_recipients_subject_or_body_text() -> None:
+    message = EmailMessage()
+    message["From"] = "Payroll <payroll@evil.example>"
+    message["To"] = "Sam Victim <sam.victim@ourcompany.example>"
+    message["Cc"] = "boss@ourcompany.example"
+    message["Subject"] = "Confidential bonus letter"
+    message.set_content("Dear Sam, your secret bonus is ready: https://evil.example/bonus")
+    message.add_attachment("letter", filename="bonus.txt")
+    spy = FakeProvider(handles=ALL_KINDS)
+
+    report = triage(message.as_bytes(), DEFAULT_SETTINGS, providers=[spy])
+
+    received = [o.value for o in spy.received]
+    assert received == [o.value for o in report.observables]  # Only attacker-side Observables.
+    for private in ("ourcompany", "victim", "Sam", "bonus letter", "Confidential", "secret", "Dear"):
+        assert not any(private in value for value in received), private
+
+
+def test_the_core_only_ever_asks_providers_to_look_up() -> None:
+    accessed: list[str] = []
+
+    class WatchedProvider(FakeProvider):
+        def __getattribute__(self, attribute: str) -> object:
+            if not attribute.startswith("_"):
+                accessed.append(attribute)
+            return super().__getattribute__(attribute)
+
+    triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[WatchedProvider()])
+
+    # The core may read the Provider's name and kinds and call lookup. Nothing else,
+    # so it can never submit or scan (ADR 0001). (The other names are the fake's own state.)
+    assert set(accessed) - {"received", "fail", "answers", "default"} == {"name", "handles", "lookup"}

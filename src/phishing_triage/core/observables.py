@@ -6,7 +6,7 @@ from email.message import EmailMessage
 from enum import StrEnum
 
 from phishing_triage.core.attachments import Attachment
-from phishing_triage.core.urls import find_urls, host_of
+from phishing_triage.core.urls import defang_domain, defang_url, find_urls, host_of
 
 
 class ObservableKind(StrEnum):
@@ -48,3 +48,23 @@ def _is_ip_address(host: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+# How each kind of Observable is named for analysts.
+LABELS = {
+    ObservableKind.URL: "URL",
+    ObservableKind.DOMAIN: "Domain",
+    ObservableKind.SHA256: "SHA-256",
+}
+
+
+def defanged(observable: Observable) -> str:
+    """The Observable's value made safe to display: URLs and domains can't be clicked.
+
+    A hash isn't clickable, so it is shown as it is.
+    """
+    if observable.kind is ObservableKind.URL:
+        return defang_url(observable.value)
+    if observable.kind is ObservableKind.DOMAIN:
+        return defang_domain(observable.value)
+    return observable.value

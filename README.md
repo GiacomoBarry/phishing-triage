@@ -10,7 +10,7 @@ It is also a learning and portfolio project on the path from service desk to SOC
 
 ## Status
 
-Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. It pulls every link out of the email as an **Observable**, decoding obfuscated ones (defanged text, HTML entities, SafeLinks and Google redirect wrappers) as text, without ever visiting them. Each attachment is listed with its type, size and SHA-256, MD5 and SHA-1 hashes, worked out in memory without ever opening, unpacking or saving the file. So far there are five rules: a Reply-To on a different domain from the sender, a display name claiming a well-known brand, a sender or link domain imitating one, links through a URL shortener, and dangerous-looking attachments (risky or double extensions, hidden characters in the name, archives and password-protected ZIPs). There are no Reputation Lookups yet. See `.scratch/phase-1-email-triage/` for the spec and tickets.
+Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. It pulls every link out of the email as an **Observable**, decoding obfuscated ones (defanged text, HTML entities, SafeLinks and Google redirect wrappers) as text, without ever visiting them. Each attachment is listed with its type, size and SHA-256, MD5 and SHA-1 hashes, worked out in memory without ever opening, unpacking or saving the file. So far there are five rules: a Reply-To on a different domain from the sender, a display name claiming a well-known brand, a sender or link domain imitating one, links through a URL shortener, and dangerous-looking attachments (risky or double extensions, hidden characters in the name, archives and password-protected ZIPs). Links and domains are looked up on **URLhaus**: a listed URL is a Decisive Finding, and a domain hosting listed URLs adds points ([ADR 0005](docs/adr/0005-urlhaus-domain-listings-are-not-decisive.md)). Not listed means **Unknown**, never clean. See `.scratch/phase-1-email-triage/` for the spec and tickets.
 
 ## Getting started
 
@@ -18,8 +18,20 @@ You need [uv](https://docs.astral.sh/uv/), which installs the right Python (3.12
 
 ```sh
 uv sync                    # install the tool and its dev dependencies
-cp .env.example .env       # API keys go here later; .env is never committed
+cp .env.example .env       # then put your API keys in .env; it is never committed
 ```
+
+### API keys
+
+Reputation Lookups need free API keys, which go in `.env` (never in `.env.example`, which is committed):
+
+| Variable | Provider | Get a key | Used from |
+|---|---|---|---|
+| `URLHAUS_AUTH_KEY` | URLhaus (abuse.ch) | [auth.abuse.ch](https://auth.abuse.ch/) | now |
+| `VIRUSTOTAL_API_KEY` | VirusTotal | virustotal.com account | ticket 10 |
+| `ABUSEIPDB_API_KEY` | AbuseIPDB | abuseipdb.com account | ticket 12 |
+
+A missing key never stops a run: that Provider's lookups are marked **Not Checked** with the reason "no API key". abuse.ch limits accounts that send unusually many queries, so don't triage huge batches in a loop until the cache (ticket 14) exists.
 
 ## Running a Triage
 
@@ -35,6 +47,10 @@ In the readable view and the Incident Note, every URL and link domain is **defan
 ### How the Verdict is reached
 
 Each red-flag rule that fires adds a Finding worth some points. The points add up to a Score (capped at 100), and thresholds turn the Score into a Verdict: 0–29 clean, 30–59 suspicious, 60 or more malicious. A **Decisive Finding**, such as a confirmed malicious link, makes the Verdict malicious whatever the Score ([ADR 0002](docs/adr/0002-points-plus-decisive-findings.md)).
+
+### Clean requires evidence
+
+A **Verdict** can only be clean if every URL and attachment got a real answer from at least one Provider. If any was **Not Checked** (no key, the Provider was down, or no Provider handles that kind yet, such as attachment hashes until VirusTotal arrives), a clean Verdict is raised to suspicious. The report keeps the Verdict from before this cap and the reason, and the Incident Note's **Not Checked** section lists every gap.
 
 ### Tuning the settings
 
