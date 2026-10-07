@@ -31,10 +31,14 @@ class TransportError(Exception):
 
 
 class Transport(Protocol):
-    """Something that can POST a form to a Provider's API."""
+    """Something that can send requests to a Provider's API."""
 
     def post(self, url: str, form: Mapping[str, str], headers: Mapping[str, str]) -> HttpResponse:
         """POST `form` to `url`. Raises TransportError if no answer came back."""
+        ...
+
+    def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
+        """GET `url`. Raises TransportError if no answer came back."""
         ...
 
 
@@ -51,6 +55,15 @@ class UrllibTransport:
             headers={"User-Agent": USER_AGENT, **headers},
             method="POST",
         )
+        return self._send(request)
+
+    def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
+        request = urllib.request.Request(
+            url, headers={"User-Agent": USER_AGENT, **headers}, method="GET"
+        )
+        return self._send(request)
+
+    def _send(self, request: urllib.request.Request) -> HttpResponse:
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 return HttpResponse(status=response.status, body=response.read())

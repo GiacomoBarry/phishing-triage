@@ -13,7 +13,7 @@ from phishing_triage.core.attachments import (
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookalike import imitated_domain, is_genuine
 from phishing_triage.core.observables import LABELS, ObservableKind, defanged
-from phishing_triage.core.providers import URLHAUS, Outcome
+from phishing_triage.core.providers import URLHAUS, VIRUSTOTAL, Outcome
 from phishing_triage.core.settings import Settings
 from phishing_triage.core.urls import defang_url, host_of
 
@@ -24,6 +24,7 @@ URL_SHORTENER = "url_shortener"
 RISKY_ATTACHMENT = "risky_attachment"
 KNOWN_MALICIOUS = "known_malicious"
 URLHAUS_DOMAIN_LISTED = "urlhaus_domain_listed"
+VIRUSTOTAL_LOW_DETECTIONS = "virustotal_low_detections"
 
 # Extensions a "double extension" hides behind: the part the reader is meant
 # to notice in a name like invoice.pdf.exe.
@@ -225,6 +226,27 @@ def urlhaus_domain_listed(rule_input: RuleInput, settings: Settings) -> list[Fin
     ]
 
 
+def virustotal_low_detections(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+    """Find Observables that some VirusTotal engines flag, but too few to be decisive.
+
+    A weak signal, so it adds points rather than deciding the Verdict. One
+    Finding per Observable, so a flagged link and its flagged domain both count.
+    """
+    return [
+        Finding(
+            rule_id=VIRUSTOTAL_LOW_DETECTIONS,
+            points=settings.points[VIRUSTOTAL_LOW_DETECTIONS],
+            decisive=False,
+            evidence=(
+                f"VirusTotal flags {LABELS[result.observable.kind]} {defanged(result.observable)}:"
+                f" {result.detail}, fewer than the {settings.decisive_engines} needed to be decisive."
+            ),
+        )
+        for result in rule_input.lookups
+        if result.provider == VIRUSTOTAL and result.outcome is Outcome.SUSPICIOUS
+    ]
+
+
 def _attachment_red_flags(attachment: Attachment, risky_extensions: tuple[str, ...]) -> list[str]:
     """Each reason an attachment looks dangerous, worded to follow its name."""
     reasons = []
@@ -288,4 +310,5 @@ BUILT_IN_RULES: tuple[Rule, ...] = (
     risky_attachment,
     known_malicious,
     urlhaus_domain_listed,
+    virustotal_low_detections,
 )

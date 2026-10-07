@@ -24,10 +24,11 @@ VALID_SETTINGS = (
     "[verdict]\nsuspicious_from = 30\nmalicious_from = 60\n"
     "[points]\nreply_to_mismatch = 20\n"
     "display_name_impersonation = 25\nlookalike_domain = 30\nurl_shortener = 10\n"
-    "risky_attachment = 25\nurlhaus_domain_listed = 20\n"
+    "risky_attachment = 25\nurlhaus_domain_listed = 20\nvirustotal_low_detections = 15\n"
     '[brands]\n"PayPal" = ["paypal.com"]\n'
     '[shorteners]\ndomains = ["bit.ly"]\n'
     '[attachments]\nrisky_extensions = ["exe", ".js"]\n'
+    "[virustotal]\ndecisive_engines = 3\n"
 )
 
 
@@ -246,6 +247,16 @@ def test_settings_option_loads_an_edited_settings_file(
             "attachments.risky_extensions must be a list of file extensions",
             id="extension not text",
         ),
+        pytest.param(
+            VALID_SETTINGS.replace("decisive_engines = 3", "decisive_engines = 0"),
+            "virustotal.decisive_engines must be at least 1",
+            id="every lookup would be decisive",
+        ),
+        pytest.param(
+            VALID_SETTINGS.split("[virustotal]")[0],
+            "missing section [virustotal]",
+            id="missing virustotal section",
+        ),
     ],
 )
 def test_broken_settings_file_exits_7_with_a_clear_error(
@@ -326,3 +337,4 @@ def test_without_api_keys_links_are_not_checked_so_the_email_cannot_be_clean(
     assert exit_code == 1
     assert "Capped:   Raised from clean to suspicious" in out
     assert "URLhaus: URL hxxps://evil[.]example/x -> not checked (no API key)" in out
+    assert "VirusTotal: URL hxxps://evil[.]example/x -> not checked (no API key)" in out

@@ -26,12 +26,16 @@ _Avoid_: Indicator, threat, bad observable
 An outside source a Reputation Lookup is made against, such as a threat-intel service or a domain registry.
 _Avoid_: Feed, source, vendor, engine
 
+**Engine**:
+One of the many antivirus products or blocklists whose results a Provider such as VirusTotal collects. One Provider can have dozens of Engines behind it, and a Reputation Lookup reports how many of them flag an Observable.
+_Avoid_: Provider, scanner, vendor
+
 **Reputation Lookup**:
 Asking a Provider what it already knows about an Observable, without the Provider visiting or scanning it.
 _Avoid_: Scan, submission, check
 
 **Unknown**:
-The outcome of a Reputation Lookup where the Provider has no record of the Observable. It is never the same as clean.
+The outcome of a Reputation Lookup where the Provider has no record of the Observable, or has a record but nothing vouching for it either way (ADR 0006). It is never the same as clean.
 _Avoid_: Clean, benign, no result
 
 **Not Checked**:

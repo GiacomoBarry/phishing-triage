@@ -10,7 +10,7 @@ from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.incident_note import describe_finding, incident_note
 from phishing_triage.core.lookups import LookupResult, NotChecked
 from phishing_triage.core.observables import LABELS, Observable, ObservableKind, defanged
-from phishing_triage.core.providers import URLHAUS, Lookup, Outcome, Provider
+from phishing_triage.core.providers import URLHAUS, VIRUSTOTAL, Lookup, Outcome, Provider
 from phishing_triage.core.report import TriageReport, Verdict
 from phishing_triage.core.settings import Settings
 from phishing_triage.core.triage import triage
@@ -31,6 +31,7 @@ __all__ = [
     "Settings",
     "TriageReport",
     "URLHAUS",
+    "VIRUSTOTAL",
     "UnparseableEmailError",
     "Verdict",
     "defanged",

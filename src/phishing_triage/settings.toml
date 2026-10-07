@@ -18,6 +18,7 @@ lookalike_domain = 30
 url_shortener = 10
 risky_attachment = 25
 urlhaus_domain_listed = 20
+virustotal_low_detections = 15
 
 # Protected Brands: names attackers pretend to be. Each line is a brand name,
 # as it would appear in a display name, and the domains genuinely theirs.
@@ -61,3 +62,11 @@ risky_extensions = [
     # Web pages and images that can contain a fake login form or script
     "html", "htm", "shtml", "svg",
 ]
+
+# VirusTotal: how many engines must flag a URL, domain or attachment as
+# malicious before it is a Decisive Finding (the Verdict is then malicious
+# whatever the Score). Fewer, but at least one, adds the
+# virustotal_low_detections points instead. Even google.com gets the odd
+# detection, so 1 would be far too jumpy.
+[virustotal]
+decisive_engines = 3

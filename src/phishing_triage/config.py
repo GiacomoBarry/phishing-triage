@@ -73,6 +73,8 @@ def _first_problem(data: dict[str, Any], template: dict[str, Any]) -> str | None
         return "verdict.suspicious_from must be at least 1, or nothing could be clean"
     if verdict["suspicious_from"] >= verdict["malicious_from"]:
         return "verdict.suspicious_from must be lower than verdict.malicious_from"
+    if data["virustotal"]["decisive_engines"] < 1:
+        return "virustotal.decisive_engines must be at least 1"
     return None
 
 
@@ -153,4 +155,5 @@ def _build(data: dict[str, Any]) -> Settings:
             extension.removeprefix(".").lower()
             for extension in data["attachments"]["risky_extensions"]
         ),
+        decisive_engines=data["virustotal"]["decisive_engines"],
     )

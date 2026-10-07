@@ -10,7 +10,7 @@ It is also a learning and portfolio project on the path from service desk to SOC
 
 ## Status
 
-Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. It pulls every link out of the email as an **Observable**, decoding obfuscated ones (defanged text, HTML entities, SafeLinks and Google redirect wrappers) as text, without ever visiting them. Each attachment is listed with its type, size and SHA-256, MD5 and SHA-1 hashes, worked out in memory without ever opening, unpacking or saving the file. So far there are five rules: a Reply-To on a different domain from the sender, a display name claiming a well-known brand, a sender or link domain imitating one, links through a URL shortener, and dangerous-looking attachments (risky or double extensions, hidden characters in the name, archives and password-protected ZIPs). Links and domains are looked up on **URLhaus**: a listed URL is a Decisive Finding, and a domain hosting listed URLs adds points ([ADR 0005](docs/adr/0005-urlhaus-domain-listings-are-not-decisive.md)). Not listed means **Unknown**, never clean. See `.scratch/phase-1-email-triage/` for the spec and tickets.
+Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. It pulls every link out of the email as an **Observable**, decoding obfuscated ones (defanged text, HTML entities, SafeLinks and Google redirect wrappers) as text, without ever visiting them. Each attachment is listed with its type, size and SHA-256, MD5 and SHA-1 hashes, worked out in memory without ever opening, unpacking or saving the file. So far there are five rules: a Reply-To on a different domain from the sender, a display name claiming a well-known brand, a sender or link domain imitating one, links through a URL shortener, and dangerous-looking attachments (risky or double extensions, hidden characters in the name, archives and password-protected ZIPs). Links and domains are looked up on **URLhaus**: a listed URL is a Decisive Finding, and a domain hosting listed URLs adds points ([ADR 0005](docs/adr/0005-urlhaus-domain-listings-are-not-decisive.md)). Links, domains and attachment hashes are also looked up on **VirusTotal**: 3 or more Engines flagging one as malicious is a Decisive Finding, and 1 or 2 adds points. Not listed or never seen means **Unknown**, never clean ([ADR 0006](docs/adr/0006-virustotal-clean-needs-an-engine-to-vouch.md)). See `.scratch/phase-1-email-triage/` for the spec and tickets.
 
 ## Getting started
 
@@ -28,10 +28,10 @@ Reputation Lookups need free API keys, which go in `.env` (never in `.env.exampl
 | Variable | Provider | Get a key | Used from |
 |---|---|---|---|
 | `URLHAUS_AUTH_KEY` | URLhaus (abuse.ch) | [auth.abuse.ch](https://auth.abuse.ch/) | now |
-| `VIRUSTOTAL_API_KEY` | VirusTotal | virustotal.com account | ticket 10 |
+| `VIRUSTOTAL_API_KEY` | VirusTotal | virustotal.com account (API key in your profile) | now |
 | `ABUSEIPDB_API_KEY` | AbuseIPDB | abuseipdb.com account | ticket 12 |
 
-A missing key never stops a run: that Provider's lookups are marked **Not Checked** with the reason "no API key". abuse.ch limits accounts that send unusually many queries, so don't triage huge batches in a loop until the cache (ticket 14) exists.
+A missing key never stops a run: that Provider's lookups are marked **Not Checked** with the reason "no API key". abuse.ch limits accounts that send unusually many queries, and VirusTotal's free API allows 4 lookups a minute and 500 a day. Until rate-limit waiting (ticket 11) arrives, lookups over VirusTotal's limit are Not Checked ("rate limited by VirusTotal"), and until the cache (ticket 14) exists, don't triage huge batches in a loop.
 
 ## Running a Triage
 
@@ -50,7 +50,7 @@ Each red-flag rule that fires adds a Finding worth some points. The points add u
 
 ### Clean requires evidence
 
-A **Verdict** can only be clean if every URL and attachment got a real answer from at least one Provider. If any was **Not Checked** (no key, the Provider was down, or no Provider handles that kind yet, such as attachment hashes until VirusTotal arrives), a clean Verdict is raised to suspicious. The report keeps the Verdict from before this cap and the reason, and the Incident Note's **Not Checked** section lists every gap.
+A **Verdict** can only be clean if every URL and attachment got a real answer from at least one Provider. If any was **Not Checked** (no key, the Provider was down or rate limited, or no Provider handles that kind), a clean Verdict is raised to suspicious. The report keeps the Verdict from before this cap and the reason, and the Incident Note's **Not Checked** section lists every gap.
 
 ### Tuning the settings
 
@@ -66,6 +66,8 @@ The `[brands]` section lists the **Protected Brands**: names attackers pretend t
 The `[shorteners]` section lists URL shortener domains. A link through one is flagged because its real destination is hidden; it is never expanded.
 
 The `[attachments]` section lists risky file extensions (programs, scripts, disk images, macro-enabled Office files, HTML and SVG). Archives and password-protected ZIPs are flagged whatever their name.
+
+The `[virustotal]` section sets `decisive_engines`, how many VirusTotal Engines must flag something as malicious for a Decisive Finding (default 3, at least 1). Fewer, but at least one, adds the `virustotal_low_detections` points instead.
 
 Your copy must keep every setting from the original. A missing or misspelt one stops the run with a clear error rather than being silently ignored ([ADR 0003](docs/adr/0003-settings-in-a-packaged-toml-file.md)).
 

@@ -38,7 +38,11 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Lookup table of functions**: a dict mapping a setting's name to the function that checks it (`LIST_ITEM_CHECKS` in `config.py`).
 - **Environment variables and `.env` files**: secrets are read from the environment, which `python-dotenv` fills from a git-ignored `.env` file (`_real_providers` in `cli.py`, `build_providers` in `providers/__init__.py`).
 - **Protocol with properties**: a Provider's interface says it must have a `name` and `handles` that can be read, and a `lookup` method; any class with those fits (`Provider` in `core/providers.py`).
-- **HTTP requests with `urllib`**: building a POST request with a form body and headers, and reading the status and body (`UrllibTransport` in `providers/transport.py`).
+- **HTTP requests with `urllib`**: building a POST request with a form body, or a GET request, with headers, and reading the status and body (`UrllibTransport` in `providers/transport.py`).
+- **HTTP GET vs POST**: GET asks to *read* something and POST *sends* something; on VirusTotal, GET looks an Observable up and POST submits it for scanning, so the VirusTotal Provider only ever uses GET (`providers/virustotal.py`, ADR 0001).
+- **HTTP status codes**: the number at the start of every answer: 200 found, 404 not found, 401 bad key, 429 too many requests; each one becomes a different outcome (`VirusTotalProvider.lookup` in `providers/virustotal.py`).
+- **base64url**: a way of writing any text using only letters, digits, `-` and `_`, so a whole URL can sit safely inside another URL's path (`_identifier` in `providers/virustotal.py`).
+- **Unix timestamps**: a date stored as seconds since 1 January 1970 UTC, turned into a readable date with `datetime.fromtimestamp` (`_evidence` in `providers/virustotal.py`).
 - **Parsing JSON**: `json.loads` turns a Provider's text answer into Python dicts and lists; anything unexpected becomes Not Checked (`URLhausProvider.lookup` in `providers/urlhaus.py`).
 - **Fake transport (test double)**: a stand-in object with the same shape as the real one, returning saved real responses, so Provider code is tested without the network (`FakeTransport` in `tests/test_urlhaus.py`).
 - **Catching broad exceptions on purpose**: one place catches every error so a buggy Provider can't crash the run, and records it instead (`_look_up` in `core/lookups.py`).
@@ -58,4 +62,7 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Testing at seams**: tests go through public entry points only, so the inside can be reorganised freely (`tests/test_triage.py` for the core, `tests/test_cli.py` for the CLI).
 - **Test fixtures**: small saved sample files and reusable setup for tests (`tests/fixtures/*.eml`, the `work_in_tmp_path` fixture in `tests/test_cli.py`).
 - **Parametrised test**: one test run against several inputs (`test_input_with_no_email_headers_is_refused` in `tests/test_triage.py`).
+- **Stacked parametrize**: two `@pytest.mark.parametrize` lines on one test run it for every combination, here every Observable kind with both clean and Unknown (`test_virustotal_clean_or_unknown_gives_no_finding_and_counts_as_checked` in `tests/test_triage.py`).
+- **`for … else`**: the `else` part runs only if the loop finished without `break`, here meaning "never got rate limited" (`main` in `scripts/capture_virustotal_fixtures.py`).
+- **Nested functions (closures)**: a function defined inside another can use the outer one's variables, such as the key and transport, without them being passed in (`save` and `look_up` in `scripts/capture_virustotal_fixtures.py`).
 - **Secrets in `.env`**: API keys stay in a git-ignored file, and `.env.example` lists the names without values (`.gitignore`, `.env.example`).

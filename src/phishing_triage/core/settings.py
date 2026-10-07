@@ -30,6 +30,10 @@ class Settings:
     # Attachment extensions (without the dot) that can run code or fake a web page.
     risky_extensions: tuple[str, ...]
 
+    # How many VirusTotal engines must flag an Observable as malicious for a
+    # Decisive Finding. Fewer (but at least one) adds points instead.
+    decisive_engines: int
+
     @property
     def protected_domains(self) -> tuple[str, ...]:
         """Every brand's domains in one list, without repeats."""

@@ -20,6 +20,7 @@ from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     LABELS,
     Provider,
+    Settings,
     TriageReport,
     UnparseableEmailError,
     Verdict,
@@ -85,7 +86,7 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
 
     try:
         if providers is None:
-            providers = _real_providers()
+            providers = _real_providers(settings)
         report = triage(raw_email, settings, providers)
     except UnparseableEmailError as error:
         _print_error(f"{email_path} is not a parseable email. {error}")
@@ -108,13 +109,13 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
     return VERDICT_EXIT_CODES[report.verdict]
 
 
-def _real_providers() -> list[Provider]:
+def _real_providers(settings: Settings) -> list[Provider]:
     """Build the real Providers, reading API keys from .env (if present) and the environment.
 
     Keys already set in the environment win over the .env file.
     """
     load_dotenv(Path(".env"))
-    return build_providers(os.environ)
+    return build_providers(os.environ, settings)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:

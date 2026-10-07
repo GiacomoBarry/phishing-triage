@@ -36,6 +36,9 @@ class FakeTransport:
             raise self.response
         return self.response
 
+    def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
+        raise AssertionError("URLhaus lookups are POSTs")
+
 
 def saved(case: str) -> HttpResponse:
     """The saved response for a case, with the status taken from its filename."""

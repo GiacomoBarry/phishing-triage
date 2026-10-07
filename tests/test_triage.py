@@ -20,6 +20,7 @@ from phishing_triage.providers.transport import HttpResponse
 from phishing_triage.providers.urlhaus import URLhausProvider
 from phishing_triage.core import (
     URLHAUS,
+    VIRUSTOTAL,
     Attachment,
     Finding,
     Lookup,
@@ -939,9 +940,12 @@ class FakeProvider:
 
 
 class UnusedTransport:
-    """A transport for a URLhaus Provider with no key, which must never send anything."""
+    """A transport for a Provider with no key, which must never send anything."""
 
     def post(self, url: str, form: Mapping[str, str], headers: Mapping[str, str]) -> HttpResponse:
+        raise AssertionError("nothing should be sent without an API key")
+
+    def get(self, url: str, headers: Mapping[str, str]) -> HttpResponse:
         raise AssertionError("nothing should be sent without an API key")
 
 
@@ -1124,3 +1128,94 @@ def test_the_core_only_ever_asks_providers_to_look_up() -> None:
     # The core may read the Provider's name and kinds and call lookup. Nothing else,
     # so it can never submit or scan (ADR 0001). (The other names are the fake's own state.)
     assert set(accessed) - {"received", "fail", "answers", "default"} == {"name", "handles", "lookup"}
+
+
+# --- VirusTotal (ticket 10) ---
+
+VT_EMAIL = email_with_body(plain="Your invoice: https://evil.example/invoice", attachment="notes")
+VT_CLEAN = Lookup(Outcome.CLEAN, "0 of 90 engines flag it as malicious")
+
+
+def virustotal_answering(answers: dict[ObservableKind, Lookup]) -> FakeProvider:
+    """A fake VirusTotal giving `answers` for the email's Observable of each kind, and clean otherwise."""
+    observables = triage(VT_EMAIL, DEFAULT_SETTINGS, providers=[]).observables
+    by_kind = {o.kind: o.value for o in observables}
+    return FakeProvider(
+        name=VIRUSTOTAL,
+        handles=ALL_KINDS,
+        default=VT_CLEAN,
+        answers={by_kind[kind]: lookup for kind, lookup in answers.items()},
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "label"),
+    [(ObservableKind.URL, "URL"), (ObservableKind.DOMAIN, "Domain"), (ObservableKind.SHA256, "SHA-256")],
+)
+def test_virustotal_at_the_decisive_engine_count_is_decisive(kind: ObservableKind, label: str) -> None:
+    virustotal = virustotal_answering({kind: Lookup(Outcome.MALICIOUS, "5 of 90 engines flag it as malicious")})
+
+    report = triage(VT_EMAIL, DEFAULT_SETTINGS, providers=[virustotal])
+
+    assert [(f.rule_id, f.decisive) for f in report.findings] == [("known_malicious", True)]
+    assert report.findings[0].evidence.startswith(f"VirusTotal reports {label} ")
+    assert report.verdict is Verdict.MALICIOUS
+
+
+@pytest.mark.parametrize("kind", list(ObservableKind))
+def test_virustotal_low_detections_add_points_but_are_not_decisive(kind: ObservableKind) -> None:
+    virustotal = virustotal_answering({kind: Lookup(Outcome.SUSPICIOUS, "2 of 90 engines flag it as malicious")})
+
+    report = triage(VT_EMAIL, DEFAULT_SETTINGS, providers=[virustotal])
+
+    assert [(f.rule_id, f.points, f.decisive) for f in report.findings] == [
+        ("virustotal_low_detections", 15, False)
+    ]
+    assert report.verdict is Verdict.CLEAN
+
+
+def test_virustotal_low_detection_finding_names_the_observable_defanged() -> None:
+    virustotal = virustotal_answering(
+        {ObservableKind.URL: Lookup(Outcome.SUSPICIOUS, "2 of 90 engines flag it as malicious")}
+    )
+
+    [finding] = triage(VT_EMAIL, DEFAULT_SETTINGS, providers=[virustotal]).findings
+
+    assert finding.evidence == (
+        "VirusTotal flags URL hxxps://evil[.]example/invoice: 2 of 90 engines flag it as malicious,"
+        " fewer than the 3 needed to be decisive."
+    )
+
+
+def test_each_observable_with_low_detections_gives_its_own_finding() -> None:
+    weak = Lookup(Outcome.SUSPICIOUS, "1 of 90 engines flag it as malicious")
+    virustotal = virustotal_answering({ObservableKind.URL: weak, ObservableKind.DOMAIN: weak})
+
+    report = triage(VT_EMAIL, DEFAULT_SETTINGS, providers=[virustotal])
+
+    assert [f.rule_id for f in report.findings] == ["virustotal_low_detections"] * 2
+    assert report.score == 30
+    assert report.verdict is Verdict.SUSPICIOUS
+
+
+@pytest.mark.parametrize("kind", list(ObservableKind))
+@pytest.mark.parametrize(
+    "answer",
+    [VT_CLEAN, Lookup(Outcome.UNKNOWN, "never seen by VirusTotal")],
+    ids=["clean", "unknown"],
+)
+def test_virustotal_clean_or_unknown_gives_no_finding_and_counts_as_checked(
+    kind: ObservableKind, answer: Lookup
+) -> None:
+    report = triage(VT_EMAIL, DEFAULT_SETTINGS, providers=[virustotal_answering({kind: answer})])
+
+    assert report.findings == []
+    assert report.not_checked == []
+    assert report.verdict is Verdict.CLEAN
+
+
+def test_an_attachment_virustotal_answered_for_can_be_clean() -> None:
+    report = triage(load("benign_attachment.eml"), DEFAULT_SETTINGS, providers=[virustotal_answering({})])
+
+    assert report.not_checked == []
+    assert report.verdict is Verdict.CLEAN
