@@ -78,23 +78,27 @@ def test_not_listed_is_unknown_never_clean(observable: Observable, case: str) ->
 
 
 @pytest.mark.parametrize(
-    ("response", "reason"),
+    ("response", "reason", "stop_asking"),
     [
-        pytest.param(saved("bad_key"), "URLhaus rejected the API key", id="bad key"),
-        pytest.param(HttpResponse(429, b"Too Many Requests"), "rate limited by URLhaus", id="rate limited"),
-        pytest.param(HttpResponse(500, b"oops"), "URLhaus answered with HTTP 500", id="server error"),
-        pytest.param(HttpResponse(200, b"<html>maintenance</html>"), "URLhaus sent an unreadable answer", id="not JSON"),
+        pytest.param(saved("bad_key"), "URLhaus rejected the API key", True, id="bad key"),
+        pytest.param(HttpResponse(429, b"Too Many Requests"), "rate limited by URLhaus", True, id="rate limited"),
+        pytest.param(HttpResponse(500, b"oops"), "URLhaus answered with HTTP 500", False, id="server error"),
+        pytest.param(
+            HttpResponse(200, b"<html>maintenance</html>"), "URLhaus sent an unreadable answer", False,
+            id="not JSON",
+        ),
         pytest.param(
             HttpResponse(200, b'{"query_status": "invalid_url"}'),
-            "URLhaus could not look it up (invalid_url)", id="refused query",
+            "URLhaus could not look it up (invalid_url)", False, id="refused query",
         ),
-        pytest.param(TransportError("timed out"), "could not reach URLhaus (timed out)", id="timeout"),
+        pytest.param(TransportError("timed out"), "could not reach URLhaus (timed out)", True, id="timeout"),
     ],
 )
 def test_problems_are_not_checked_with_the_reason(
-    response: HttpResponse | Exception, reason: str
+    response: HttpResponse | Exception, reason: str, stop_asking: bool
 ) -> None:
-    assert look_up(A_URL, response) == Lookup(Outcome.NOT_CHECKED, reason)
+    # Problems that will affect every lookup also say to stop asking URLhaus for this Triage.
+    assert look_up(A_URL, response) == Lookup(Outcome.NOT_CHECKED, reason, stop_asking=stop_asking)
 
 
 def test_no_api_key_is_not_checked_without_asking_urlhaus() -> None:
@@ -102,7 +106,7 @@ def test_no_api_key_is_not_checked_without_asking_urlhaus() -> None:
 
     lookup = URLhausProvider(auth_key=None, transport=transport).lookup(A_URL)
 
-    assert lookup == Lookup(Outcome.NOT_CHECKED, "no API key")
+    assert lookup == Lookup(Outcome.NOT_CHECKED, "no API key", stop_asking=True)
     assert transport.requests == []
 
 

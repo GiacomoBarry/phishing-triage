@@ -140,32 +140,36 @@ def test_a_domain_no_engine_vouches_for_is_unknown_not_clean() -> None:
 
 
 @pytest.mark.parametrize(
-    ("observable", "response", "reason"),
+    ("observable", "response", "reason", "stop_asking"),
     [
-        pytest.param(EICAR, saved("bad_key"), "VirusTotal rejected the API key", id="bad key"),
-        pytest.param(EICAR, saved("rate_limited"), "rate limited by VirusTotal", id="rate limited"),
+        pytest.param(EICAR, saved("bad_key"), "VirusTotal rejected the API key", True, id="bad key"),
+        pytest.param(EICAR, saved("rate_limited"), "rate limited by VirusTotal", True, id="rate limited"),
         pytest.param(
             Observable(ObservableKind.DOMAIN, "never-registered-phishing-triage-fixture.example"),
             saved("domain_invalid"),
             "VirusTotal could not look it up (InvalidArgumentError)",
+            False,
             id="invalid domain",
         ),
-        pytest.param(EICAR, HttpResponse(500, b"oops"), "VirusTotal answered with HTTP 500", id="server error"),
+        pytest.param(EICAR, HttpResponse(500, b"oops"), "VirusTotal answered with HTTP 500", False, id="server error"),
         pytest.param(
             EICAR, HttpResponse(200, b"<html>maintenance</html>"),
-            "VirusTotal sent an unreadable answer", id="not JSON",
+            "VirusTotal sent an unreadable answer", False, id="not JSON",
         ),
         pytest.param(
             EICAR, HttpResponse(200, b'{"data": {"attributes": {}}}'),
-            "VirusTotal sent an unreadable answer", id="no engine results",
+            "VirusTotal sent an unreadable answer", False, id="no engine results",
         ),
-        pytest.param(EICAR, TransportError("timed out"), "could not reach VirusTotal (timed out)", id="timeout"),
+        pytest.param(
+            EICAR, TransportError("timed out"), "could not reach VirusTotal (timed out)", True, id="timeout"
+        ),
     ],
 )
 def test_problems_are_not_checked_with_the_reason(
-    observable: Observable, response: HttpResponse | Exception, reason: str
+    observable: Observable, response: HttpResponse | Exception, reason: str, stop_asking: bool
 ) -> None:
-    assert look_up(observable, response) == Lookup(Outcome.NOT_CHECKED, reason)
+    # Problems that will affect every lookup also say to stop asking VirusTotal for this Triage.
+    assert look_up(observable, response) == Lookup(Outcome.NOT_CHECKED, reason, stop_asking=stop_asking)
 
 
 def test_no_api_key_is_not_checked_without_asking_virustotal() -> None:
@@ -173,7 +177,7 @@ def test_no_api_key_is_not_checked_without_asking_virustotal() -> None:
 
     lookup = VirusTotalProvider(api_key=None, transport=transport, decisive_engines=3).lookup(EICAR)
 
-    assert lookup == Lookup(Outcome.NOT_CHECKED, "no API key")
+    assert lookup == Lookup(Outcome.NOT_CHECKED, "no API key", stop_asking=True)
     assert transport.requests == []
 
 

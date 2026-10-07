@@ -8,7 +8,14 @@ from phishing_triage.core.attachments import Attachment, display_filename
 from phishing_triage.core.errors import UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.incident_note import describe_finding, incident_note
-from phishing_triage.core.lookups import LookupResult, NotChecked
+from phishing_triage.core.lookups import (
+    LookupResult,
+    LookupStarted,
+    NotChecked,
+    Progress,
+    ProviderStopped,
+    WaitingForRateLimit,
+)
 from phishing_triage.core.observables import LABELS, Observable, ObservableKind, defanged
 from phishing_triage.core.providers import URLHAUS, VIRUSTOTAL, Lookup, Outcome, Provider
 from phishing_triage.core.report import TriageReport, Verdict
@@ -21,10 +28,13 @@ __all__ = [
     "Finding",
     "Lookup",
     "LookupResult",
+    "LookupStarted",
     "NotChecked",
     "Observable",
     "ObservableKind",
     "Outcome",
+    "Progress",
+    "ProviderStopped",
     "Provider",
     "Rule",
     "RuleInput",
@@ -34,6 +44,7 @@ __all__ = [
     "VIRUSTOTAL",
     "UnparseableEmailError",
     "Verdict",
+    "WaitingForRateLimit",
     "defanged",
     "describe_finding",
     "display_filename",

@@ -29,6 +29,10 @@ ANSWERING_CATEGORIES = ("malicious", "suspicious", "harmless", "undetected")
 MAX_ENGINES_NAMED = 10
 
 
+# The free API allows 4 lookups a minute (and 500 a day).
+LOOKUPS_PER_MINUTE = 4
+
+
 class VirusTotalProvider:
     """Looks URLs, domains and attachment hashes up on VirusTotal."""
 
@@ -45,22 +49,26 @@ class VirusTotalProvider:
     def handles(self) -> Set[ObservableKind]:
         return LOOKUP_PATHS.keys()
 
+    @property
+    def lookups_per_minute(self) -> int:
+        return LOOKUPS_PER_MINUTE
+
     def lookup(self, observable: Observable) -> Lookup:
         if not self._api_key:
-            return Lookup(Outcome.NOT_CHECKED, "no API key")
+            return Lookup(Outcome.NOT_CHECKED, "no API key", stop_asking=True)
 
         path = LOOKUP_PATHS[observable.kind] + _identifier(observable)
         try:
             response = self._transport.get(API_ROOT + path, {"x-apikey": self._api_key})
         except TransportError as error:
-            return Lookup(Outcome.NOT_CHECKED, f"could not reach VirusTotal ({error})")
+            return Lookup(Outcome.NOT_CHECKED, f"could not reach VirusTotal ({error})", stop_asking=True)
 
         if response.status == 404:
             return Lookup(Outcome.UNKNOWN, "never seen by VirusTotal")
         if response.status == 401:
-            return Lookup(Outcome.NOT_CHECKED, "VirusTotal rejected the API key")
+            return Lookup(Outcome.NOT_CHECKED, "VirusTotal rejected the API key", stop_asking=True)
         if response.status == 429:
-            return Lookup(Outcome.NOT_CHECKED, "rate limited by VirusTotal")
+            return Lookup(Outcome.NOT_CHECKED, "rate limited by VirusTotal", stop_asking=True)
         data = _json_object(response.body)
         if response.status == 400:
             code = _error_code(data)

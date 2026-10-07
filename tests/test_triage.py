@@ -24,14 +24,18 @@ from phishing_triage.core import (
     Attachment,
     Finding,
     Lookup,
+    LookupStarted,
     NotChecked,
     Observable,
     ObservableKind,
     Outcome,
+    Progress,
+    ProviderStopped,
     RuleInput,
     Settings,
     UnparseableEmailError,
     Verdict,
+    WaitingForRateLimit,
     incident_note,
     triage,
 )
@@ -910,8 +914,10 @@ class FakeProvider:
         default: Lookup = Lookup(Outcome.UNKNOWN, "not listed"),
         answers: dict[str, Lookup] | None = None,
         fail: bool = False,
+        lookups_per_minute: int | None = None,
     ) -> None:
         self._name = name
+        self._lookups_per_minute = lookups_per_minute
         self._handles = handles
         self.default = default
         self.answers = answers or {}
@@ -925,6 +931,10 @@ class FakeProvider:
     @property
     def handles(self) -> frozenset[ObservableKind]:
         return self._handles
+
+    @property
+    def lookups_per_minute(self) -> int | None:
+        return self._lookups_per_minute
 
     def lookup(self, observable: Observable) -> Lookup:
         self.received.append(observable)
@@ -979,10 +989,10 @@ def test_unknown_everywhere_can_still_be_clean() -> None:
     assert report.not_checked == []
     assert report.cap_reason == ""
     assert [(r.provider, r.observable.value, r.outcome) for r in report.lookups] == [
-        ("FakeIntel", "https://evil.example/invoice", Outcome.UNKNOWN),
         ("FakeIntel", "evil.example", Outcome.UNKNOWN),
+        ("FakeIntel", "https://evil.example/invoice", Outcome.UNKNOWN),
     ]
-    assert report.to_dict()["lookups"][0] == {
+    assert report.to_dict()["lookups"][1] == {
         "provider": "FakeIntel",
         "observable": {"kind": "url", "value": "https://evil.example/invoice"},
         "outcome": "unknown",
@@ -1109,7 +1119,7 @@ def test_providers_never_receive_recipients_subject_or_body_text() -> None:
     report = triage(message.as_bytes(), DEFAULT_SETTINGS, providers=[spy])
 
     received = [o.value for o in spy.received]
-    assert received == [o.value for o in report.observables]  # Only attacker-side Observables.
+    assert sorted(received) == sorted(o.value for o in report.observables)  # Only attacker-side Observables.
     for private in ("ourcompany", "victim", "Sam", "bonus letter", "Confidential", "secret", "Dear"):
         assert not any(private in value for value in received), private
 
@@ -1125,9 +1135,11 @@ def test_the_core_only_ever_asks_providers_to_look_up() -> None:
 
     triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[WatchedProvider()])
 
-    # The core may read the Provider's name and kinds and call lookup. Nothing else,
-    # so it can never submit or scan (ADR 0001). (The other names are the fake's own state.)
-    assert set(accessed) - {"received", "fail", "answers", "default"} == {"name", "handles", "lookup"}
+    # The core may read the Provider's name, kinds and rate limit and call lookup. Nothing
+    # else, so it can never submit or scan (ADR 0001). (The other names are the fake's own state.)
+    assert set(accessed) - {"received", "fail", "answers", "default"} == {
+        "name", "handles", "lookups_per_minute", "lookup",
+    }
 
 
 # --- VirusTotal (ticket 10) ---
@@ -1240,3 +1252,157 @@ def test_a_domain_many_virustotal_engines_flag_adds_points_but_is_never_decisive
         )
     ]
     assert report.verdict is Verdict.CLEAN
+
+
+# --- Lookup orchestration (ticket 11) ---
+
+TWO_LINKS_EMAIL = email_with_body(
+    plain=(
+        "Pay here: https://evil.example/pay and again https://evil.example/pay\n"
+        "Or here: https://evil.example/alt\n"
+    ),
+    attachment="notes",
+)
+
+
+def test_each_observable_is_looked_up_once_with_domains_first() -> None:
+    provider = FakeProvider(handles=ALL_KINDS)
+
+    triage(TWO_LINKS_EMAIL, DEFAULT_SETTINGS, providers=[provider])
+
+    assert [(o.kind, o.value) for o in provider.received[:3]] == [
+        (ObservableKind.DOMAIN, "evil.example"),
+        (ObservableKind.URL, "https://evil.example/pay"),
+        (ObservableKind.URL, "https://evil.example/alt"),
+    ]
+    assert [o.kind for o in provider.received[3:]] == [ObservableKind.SHA256]
+
+
+def test_urls_over_the_lookup_cap_are_not_checked_and_the_verdict_cannot_be_clean() -> None:
+    raw = email_with_body(plain="https://a.example/1 https://b.example/2 https://c.example/3")
+    urlhaus, virustotal = FakeProvider(name="URLhaus"), FakeProvider(name="VirusTotal")
+
+    report = triage(raw, replace(DEFAULT_SETTINGS, url_cap=2), providers=[urlhaus, virustotal])
+
+    asked = [o.value for o in urlhaus.received if o.kind is ObservableKind.URL]
+    assert asked == ["https://a.example/1", "https://b.example/2"]
+    assert report.not_checked == [
+        NotChecked(
+            Observable(ObservableKind.URL, "https://c.example/3"),
+            ["URLhaus: over lookup cap", "VirusTotal: over lookup cap"],
+        )
+    ]
+    assert report.verdict is Verdict.SUSPICIOUS
+
+
+def test_the_default_url_cap_is_10() -> None:
+    raw = email_with_body(plain=" ".join(f"https://evil.example/{n}" for n in range(11)))
+    provider = FakeProvider()
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[provider])
+
+    assert sum(o.kind is ObservableKind.URL for o in provider.received) == 10
+    assert [n.observable.value for n in report.not_checked] == ["https://evil.example/10"]
+
+
+class FakeClock:
+    """A clock that never really waits: sleeping just moves its time on, and is recorded."""
+
+    def __init__(self) -> None:
+        self.time = 1000.0
+        self.sleeps: list[float] = []
+
+    def now(self) -> float:
+        return self.time
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.time += seconds
+
+
+ONE_DOMAIN_TWO_URLS = email_with_body(plain="https://evil.example/pay https://evil.example/alt")
+
+
+def test_each_provider_is_paced_to_its_own_rate_limit_by_waiting() -> None:
+    # With a 10% safety margin: URLhaus one every 2.2s, VirusTotal one every 16.5s.
+    urlhaus = FakeProvider(name="URLhaus", lookups_per_minute=30)
+    virustotal = FakeProvider(name="VirusTotal", lookups_per_minute=4)
+    clock = FakeClock()
+
+    report = triage(ONE_DOMAIN_TWO_URLS, DEFAULT_SETTINGS, providers=[urlhaus, virustotal], clock=clock)
+
+    # Domain: both at once. URL 1: URLhaus waits 2.2s, then VirusTotal 14.3s more
+    # (16.5s after its first). URL 2: URLhaus's gap has long passed; VirusTotal waits 16.5s.
+    assert clock.sleeps == pytest.approx([2.2, 14.3, 16.5])
+    assert report.not_checked == []
+
+
+def test_a_provider_without_a_rate_limit_never_waits() -> None:
+    clock = FakeClock()
+
+    triage(ONE_DOMAIN_TWO_URLS, DEFAULT_SETTINGS, providers=[FakeProvider()], clock=clock)
+
+    assert clock.sleeps == []
+
+
+def test_a_provider_that_cannot_answer_is_not_asked_or_waited_for_again() -> None:
+    unreachable = Lookup(Outcome.NOT_CHECKED, "could not reach FakeIntel (timed out)", stop_asking=True)
+    provider = FakeProvider(handles=ALL_KINDS, default=unreachable, lookups_per_minute=4)
+    clock = FakeClock()
+
+    report = triage(TWO_LINKS_EMAIL, DEFAULT_SETTINGS, providers=[provider], clock=clock)
+
+    assert len(provider.received) == 1
+    assert clock.sleeps == []
+    assert [n.reasons for n in report.not_checked] == [
+        ["FakeIntel: could not reach FakeIntel (timed out)"]
+    ] * 4
+
+
+def test_progress_is_reported_for_each_lookup_and_each_wait() -> None:
+    events: list[Progress] = []
+    provider = FakeProvider(lookups_per_minute=4)
+
+    triage(
+        ONE_DOMAIN_TWO_URLS, DEFAULT_SETTINGS, providers=[provider],
+        clock=FakeClock(), on_progress=events.append,
+    )
+
+    domain = Observable(ObservableKind.DOMAIN, "evil.example")
+    url_1 = Observable(ObservableKind.URL, "https://evil.example/pay")
+    url_2 = Observable(ObservableKind.URL, "https://evil.example/alt")
+    # 4 a minute plus the 10% margin is one every 16.5 seconds.
+    assert [type(event).__name__ for event in events] == [
+        "LookupStarted", "WaitingForRateLimit", "LookupStarted", "WaitingForRateLimit", "LookupStarted",
+    ]
+    assert [e for e in events if isinstance(e, LookupStarted)] == [
+        LookupStarted(number=1, total=3, provider="FakeIntel", observable=domain),
+        LookupStarted(number=2, total=3, provider="FakeIntel", observable=url_1),
+        LookupStarted(number=3, total=3, provider="FakeIntel", observable=url_2),
+    ]
+    waits = [(e.provider, e.seconds) for e in events if isinstance(e, WaitingForRateLimit)]
+    assert [provider for provider, _ in waits] == ["FakeIntel", "FakeIntel"]
+    assert [seconds for _, seconds in waits] == pytest.approx([16.5, 16.5])
+
+
+def test_a_crashing_provider_is_not_asked_or_waited_for_again() -> None:
+    provider = FakeProvider(handles=ALL_KINDS, fail=True, lookups_per_minute=4)
+    clock = FakeClock()
+
+    report = triage(TWO_LINKS_EMAIL, DEFAULT_SETTINGS, providers=[provider], clock=clock)
+
+    assert len(provider.received) == 1
+    assert clock.sleeps == []
+    assert len(report.not_checked) == 4
+
+
+def test_progress_says_when_a_provider_will_not_be_asked_again() -> None:
+    events: list[Progress] = []
+    provider = FakeProvider(default=Lookup(Outcome.NOT_CHECKED, "no API key", stop_asking=True))
+
+    triage(ONE_DOMAIN_TWO_URLS, DEFAULT_SETTINGS, providers=[provider], on_progress=events.append)
+
+    assert events == [
+        LookupStarted(number=1, total=3, provider="FakeIntel", observable=Observable(ObservableKind.DOMAIN, "evil.example")),
+        ProviderStopped(provider="FakeIntel", reason="no API key"),
+    ]

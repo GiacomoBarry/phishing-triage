@@ -21,6 +21,11 @@ LOOKUP_ENDPOINTS = {
 }
 
 
+# abuse.ch publishes no per-minute limit but restricts heavy accounts for
+# up to 72 hours, so lookups are kept gentle.
+LOOKUPS_PER_MINUTE = 30
+
+
 class URLhausProvider:
     """Looks URLs and domains up on URLhaus."""
 
@@ -36,9 +41,13 @@ class URLhausProvider:
     def handles(self) -> Set[ObservableKind]:
         return LOOKUP_ENDPOINTS.keys()
 
+    @property
+    def lookups_per_minute(self) -> int:
+        return LOOKUPS_PER_MINUTE
+
     def lookup(self, observable: Observable) -> Lookup:
         if not self._auth_key:
-            return Lookup(Outcome.NOT_CHECKED, "no API key")
+            return Lookup(Outcome.NOT_CHECKED, "no API key", stop_asking=True)
 
         endpoint, field = LOOKUP_ENDPOINTS[observable.kind]
         try:
@@ -46,12 +55,12 @@ class URLhausProvider:
                 endpoint, {field: observable.value}, {"Auth-Key": self._auth_key}
             )
         except TransportError as error:
-            return Lookup(Outcome.NOT_CHECKED, f"could not reach URLhaus ({error})")
+            return Lookup(Outcome.NOT_CHECKED, f"could not reach URLhaus ({error})", stop_asking=True)
 
         if response.status in (401, 403):
-            return Lookup(Outcome.NOT_CHECKED, "URLhaus rejected the API key")
+            return Lookup(Outcome.NOT_CHECKED, "URLhaus rejected the API key", stop_asking=True)
         if response.status == 429:
-            return Lookup(Outcome.NOT_CHECKED, "rate limited by URLhaus")
+            return Lookup(Outcome.NOT_CHECKED, "rate limited by URLhaus", stop_asking=True)
         if response.status != 200:
             return Lookup(Outcome.NOT_CHECKED, f"URLhaus answered with HTTP {response.status}")
 
@@ -71,7 +80,7 @@ def _interpret(kind: ObservableKind, data: dict[str, Any]) -> Lookup:
         return Lookup(Outcome.UNKNOWN, "not listed", {"query_status": status})
     if status != "ok":
         if "auth" in str(status):
-            return Lookup(Outcome.NOT_CHECKED, "URLhaus rejected the API key")
+            return Lookup(Outcome.NOT_CHECKED, "URLhaus rejected the API key", stop_asking=True)
         return Lookup(Outcome.NOT_CHECKED, f"URLhaus could not look it up ({status})")
     if kind is ObservableKind.URL:
         return _url_listing(data)

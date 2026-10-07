@@ -156,4 +156,5 @@ def _build(data: dict[str, Any]) -> Settings:
             for extension in data["attachments"]["risky_extensions"]
         ),
         decisive_engines=data["virustotal"]["decisive_engines"],
+        url_cap=data["lookups"]["url_cap"],
     )

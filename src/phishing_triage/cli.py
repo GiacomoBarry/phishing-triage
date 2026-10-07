@@ -19,6 +19,9 @@ from dotenv import load_dotenv
 from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     LABELS,
+    LookupStarted,
+    Progress,
+    ProviderStopped,
     Provider,
     Settings,
     TriageReport,
@@ -87,7 +90,7 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
     try:
         if providers is None:
             providers = _real_providers(settings)
-        report = triage(raw_email, settings, providers)
+        report = triage(raw_email, settings, providers, on_progress=_show_progress)
     except UnparseableEmailError as error:
         _print_error(f"{email_path} is not a parseable email. {error}")
         return ExitCode.UNPARSEABLE_EMAIL
@@ -107,6 +110,18 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
     print(f"Triage Report saved to {saved_path}", file=sys.stderr)
 
     return VERDICT_EXIT_CODES[report.verdict]
+
+
+def _show_progress(event: Progress) -> None:
+    """Show lookup progress on stderr, so it never mixes with --json output."""
+    if isinstance(event, LookupStarted):
+        observable = f"{LABELS[event.observable.kind]} {defanged(event.observable)}"
+        message = f"Looking up {event.number} of {event.total}: {event.provider}, {observable}"
+    elif isinstance(event, ProviderStopped):
+        message = f"Not asking {event.provider} again: {event.reason}"
+    else:
+        message = f"Waiting {event.seconds:.0f}s for {event.provider}'s rate limit..."
+    print(message, file=sys.stderr, flush=True)
 
 
 def _real_providers(settings: Settings) -> list[Provider]:

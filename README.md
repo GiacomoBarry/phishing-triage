@@ -31,7 +31,18 @@ Reputation Lookups need free API keys, which go in `.env` (never in `.env.exampl
 | `VIRUSTOTAL_API_KEY` | VirusTotal | virustotal.com account (API key in your profile) | now |
 | `ABUSEIPDB_API_KEY` | AbuseIPDB | abuseipdb.com account | ticket 12 |
 
-A missing key never stops a run: that Provider's lookups are marked **Not Checked** with the reason "no API key". abuse.ch limits accounts that send unusually many queries, and VirusTotal's free API allows 4 lookups a minute and 500 a day. Until rate-limit waiting (ticket 11) arrives, lookups over VirusTotal's limit are Not Checked ("rate limited by VirusTotal"), and until the cache (ticket 14) exists, don't triage huge batches in a loop.
+A missing key never stops a run: that Provider's lookups are marked **Not Checked** with the reason "no API key". If a Provider can't be reached, has no key or rejects it, says it's rate limited, or crashes, the rest of its lookups for that email are marked Not Checked with the same reason straight away, instead of each waiting out a timeout.
+
+### Rate limits and waiting
+
+VirusTotal's free API allows 4 lookups a minute (and 500 a day), and abuse.ch restricts accounts that send unusually many queries, so the tool paces itself: it waits between lookups to the same Provider (16.5 seconds for VirusTotal and 2.2 for URLhaus, which includes a 10% safety margin, [ADR 0008](docs/adr/0008-pace-providers-and-stop-asking-after-provider-wide-failures.md)) rather than being turned away. While it works, it shows progress on stderr, so `--json` output stays clean:
+
+```
+Looking up 2 of 4: VirusTotal, Domain malware[.]wicar[.]org
+Waiting 14s for VirusTotal's rate limit...
+```
+
+An email with three links and an attachment takes about 100 seconds on a free VirusTotal key. Each email's domains are looked up first, then URLs (at most 10, see `[lookups]` below), then attachment hashes, and each one is looked up only once. Until the cache (ticket 14) exists, don't triage huge batches in a loop.
 
 ## Running a Triage
 
@@ -66,6 +77,8 @@ The `[brands]` section lists the **Protected Brands**: names attackers pretend t
 The `[shorteners]` section lists URL shortener domains. A link through one is flagged because its real destination is hidden; it is never expanded.
 
 The `[attachments]` section lists risky file extensions (programs, scripts, disk images, macro-enabled Office files, HTML and SVG). Archives and password-protected ZIPs are flagged whatever their name.
+
+The `[lookups]` section sets `url_cap`, the most URLs looked up per email (default 10). Any more are **Not Checked** ("over lookup cap"), so the email can't be called clean; their domains are still looked up.
 
 The `[virustotal]` section sets `decisive_engines`, how many VirusTotal Engines must flag a link or attachment as malicious for a Decisive Finding (default 3, at least 1). Fewer, but at least one, adds the `virustotal_low_detections` points instead, as does a flagged domain however many Engines flag it.
 

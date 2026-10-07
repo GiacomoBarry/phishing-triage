@@ -70,3 +70,10 @@ risky_extensions = [
 # jumpy. A flagged domain only ever adds those points, never decides.
 [virustotal]
 decisive_engines = 3
+
+# Reputation Lookups: the most URLs looked up per email, so a link-heavy
+# email finishes in reasonable time on free API keys. URLs over the cap are
+# Not Checked, so the email can't be called clean. Domains are looked up
+# first and aren't capped, so capped URLs usually still have their domain checked.
+[lookups]
+url_cap = 10

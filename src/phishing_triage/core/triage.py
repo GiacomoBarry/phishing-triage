@@ -2,7 +2,7 @@
 
 import hashlib
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from email import policy
 from email.message import EmailMessage
@@ -10,9 +10,10 @@ from email.parser import BytesParser
 from importlib.metadata import version
 
 from phishing_triage.core.attachments import extract_attachments
+from phishing_triage.core.clock import Clock, SystemClock
 from phishing_triage.core.errors import UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
-from phishing_triage.core.lookups import find_not_checked, run_lookups
+from phishing_triage.core.lookups import Progress, find_not_checked, run_lookups
 from phishing_triage.core.observables import extract_observables
 from phishing_triage.core.providers import Provider
 from phishing_triage.core.report import TriageReport
@@ -36,10 +37,15 @@ def triage(
     settings: Settings,
     providers: Sequence[Provider],
     rules: Sequence[Rule] = BUILT_IN_RULES,
+    clock: Clock | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
 ) -> TriageReport:
     """Run one Triage on the raw bytes of an email and return its Triage Report.
 
-    `rules` defaults to the built-in red-flag rules. Tests can pass their own.
+    `rules` defaults to the built-in red-flag rules, and `clock` to the real
+    clock, used to wait out Providers' rate limits. Tests can pass their own.
+    `on_progress`, if given, is called as lookups start and while waiting, so
+    the caller can show progress; the core itself never prints.
     Raises UnparseableEmailError if the bytes are not an email at all.
     """
     message = _parse(raw_email)
@@ -51,7 +57,13 @@ def triage(
 
     attachments = extract_attachments(message)
     observables = extract_observables(message, attachments)
-    lookups = run_lookups(observables, providers)
+    lookups = run_lookups(
+        observables,
+        providers,
+        settings.url_cap,
+        clock or SystemClock(),
+        on_progress or (lambda event: None),
+    )
     rule_input = RuleInput(
         message=message, observables=observables, attachments=attachments, lookups=lookups
     )

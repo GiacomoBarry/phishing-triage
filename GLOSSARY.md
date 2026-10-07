@@ -34,6 +34,10 @@ _Avoid_: Provider, scanner, vendor
 Asking a Provider what it already knows about an Observable, without the Provider visiting or scanning it.
 _Avoid_: Scan, submission, check
 
+**Lookup Cap**:
+The most URLs looked up in one Triage (`[lookups] url_cap`, 10 by default). URLs over it are Not Checked with the reason "over lookup cap", so they can't let the email be called clean.
+_Avoid_: Limit, quota (those are the Provider's rate limits)
+
 **Unknown**:
 The outcome of a Reputation Lookup where the Provider has no record of the Observable, or has a record but nothing vouching for it either way (ADR 0006). It is never the same as clean.
 _Avoid_: Clean, benign, no result

@@ -34,6 +34,9 @@ class Settings:
     # Decisive Finding. Fewer (but at least one) adds points instead.
     decisive_engines: int
 
+    # The most URLs looked up per Triage. Any more are Not Checked ("over lookup cap").
+    url_cap: int
+
     @property
     def protected_domains(self) -> tuple[str, ...]:
         """Every brand's domains in one list, without repeats."""

@@ -27,7 +27,7 @@ flowchart LR
         direction TB
         parse["Parse the email"] --> attach["Describe attachments<br/>core/attachments.py"]
         attach --> extract["Extract Observables<br/>core/observables.py, core/urls.py"]
-        extract --> lookups["Reputation Lookups<br/>core/lookups.py"]
+        extract --> lookups["Reputation Lookups<br/>domains first, URL cap, rate-limit waits<br/>core/lookups.py"]
         lookups -->|"email + Observables + attachments + lookups (RuleInput)"| rules["Apply each rule<br/>core/rules.py"]
         rules <-.->|"is this domain a lookalike?"| lookalike["core/lookalike.py"]
         rules -->|Findings| verdict["Score, Verdict and<br/>clean-requires-evidence cap<br/>core/verdict.py"]
@@ -40,6 +40,8 @@ flowchart LR
     cli -->|readable view or --json| terminal["Terminal"]
     cli -->|JSON file| reports["reports/&lt;report-id&gt;.json"]
     cli -->|exit code 0-7| shell["Shell / scripts"]
+    lookups -.->|"progress events (on_progress)"| cli
+    cli -.->|progress lines| stderr["stderr"]
 ```
 
 Step by step:
@@ -50,7 +52,7 @@ Step by step:
 4. The core parses the email. If the input has none of the standard email headers (From, To, Subject, Date and so on), it raises `UnparseableEmailError` and the CLI stops with exit code 4.
 5. The core describes each attachment: filename, declared type, size, SHA-256, MD5 and SHA-1, whether it's an archive (judged by its first bytes, name and declared type) and whether a ZIP is password-protected (from its table of contents only). Everything happens in memory; nothing is opened, unpacked or saved.
 6. The core extracts the **Observables**: every URL in the plain-text and HTML bodies (not attachments), decoded offline from defanged text, HTML entities and link wrappers such as SafeLinks, then each URL's domain, then each attachment's SHA-256. Nothing is ever fetched ([ADR 0001](adr/0001-reputation-lookups-only.md)).
-7. The core asks every Provider about each Observable of a kind it handles (**Reputation Lookups**). Each answer is malicious, suspicious, clean, **Unknown** or **Not Checked** with a reason. A Provider that fails or crashes becomes Not Checked; the run carries on.
+7. The core asks every Provider about each Observable of a kind it handles (**Reputation Lookups**): domains first, then URLs (only the first 10; the rest are Not Checked, "over lookup cap"), then attachment hashes. It waits between lookups to keep to each Provider's rate limit, and reports progress through a callback, which the CLI prints to stderr. Each answer is malicious, suspicious, clean, **Unknown** or **Not Checked** with a reason. A Provider that fails or crashes becomes Not Checked; the run carries on. A Provider that says to stop asking (unreachable, no or bad key, rate limited, or crashed) isn't asked again in this Triage ([ADR 0008](adr/0008-pace-providers-and-stop-asking-after-provider-wide-failures.md)).
 8. The core runs each red-flag rule. A rule is given a `RuleInput` (the parsed email, its Observables, its attachments and the lookup results) and returns zero or more **Findings**, each with its points, whether it is decisive, and its evidence.
 9. The core adds up the points of the non-decisive Findings into the **Score** (capped at 100) and reaches a **Verdict**: any **Decisive Finding** means malicious, and otherwise the thresholds in the settings decide. Then, if the Verdict is clean but any URL or attachment was Not Checked, it is raised to suspicious, because clean requires evidence.
 10. The core builds the **Triage Report**: metadata (report ID, timestamp, tool version, format version, SHA-256 of the email), the sender and subject, the Observables, the attachments, every lookup result, what was Not Checked, the Findings, the Score, the Verdict (and the Verdict before the cap, with the reason) and any warnings.
@@ -61,7 +63,7 @@ Step by step:
 
 | File | What it does |
 |---|---|
-| `core/triage.py` | The one public entry point, `triage()`. It runs the pipeline: parse, apply rules, score, build the report. Extracting **Observables** and making **Reputation Lookups** will slot in before the rules. It takes an optional `rules` argument so tests can pass their own rules. |
+| `core/triage.py` | The one public entry point, `triage()`. It runs the pipeline: parse, describe attachments, extract **Observables**, make **Reputation Lookups**, apply rules, score, build the report. Optional arguments let tests pass their own `rules` and `clock`, and let the CLI pass `on_progress` to show progress. |
 | `core/findings.py` | Defines a **Finding**, `RuleInput` (what every rule is given: the parsed email and its Observables, with lookup results to come) and the shape of a rule: a function that takes a `RuleInput` and the settings and returns a list of Findings. |
 | `core/attachments.py` | Describes each attachment from the outside: hashes, size, declared type, archive format and the ZIP encryption flag. Also makes filenames safe to print, escaping hidden characters. It never opens, unpacks or saves a file. |
 | `core/observables.py` | Defines an **Observable** (a kind, `url`, `domain` or `sha256`, and a value) and `extract_observables()`, which builds the list from the email's URLs and attachment hashes. |
@@ -74,8 +76,9 @@ Step by step:
 | `core/settings.py` | The shape of the tunable settings: Finding points, Verdict thresholds, the **Protected Brands** with their domains, URL shortener domains, risky attachment extensions and the decisive VirusTotal Engine count. The values come from the settings file. |
 | `settings.toml` | The default settings, shipped with the tool ([ADR 0003](adr/0003-settings-in-a-packaged-toml-file.md)). |
 | `config.py` | Outside the core: reads a settings file, checks it against the shipped one and builds the `Settings`. |
-| `core/providers.py` | The shape every **Provider** shares: a name, the Observable kinds it handles, and `lookup()`, which returns a `Lookup` (an `Outcome` with a detail and raw evidence). There is deliberately no way to submit or scan ([ADR 0001](adr/0001-reputation-lookups-only.md)). |
-| `core/lookups.py` | Runs the Reputation Lookups, turning any Provider failure into Not Checked, and works out which Observables no Provider answered for. |
+| `core/providers.py` | The shape every **Provider** shares: a name, the Observable kinds it handles, its rate limit (`lookups_per_minute`), and `lookup()`, which returns a `Lookup` (an `Outcome` with a detail, raw evidence, and `stop_asking` when it can't answer anything else). There is deliberately no way to submit or scan ([ADR 0001](adr/0001-reputation-lookups-only.md)). |
+| `core/lookups.py` | Runs the Reputation Lookups: domains first, the URL cap, waiting for rate limits, not asking a Provider again once it says to stop, and progress events (`LookupStarted`, `WaitingForRateLimit`, `ProviderStopped`). Each Provider's pacing and stop state live in one `_ProviderTurns` object. Turns any Provider failure into Not Checked, and works out which Observables no Provider answered for. |
+| `core/clock.py` | Telling the time and waiting, behind a `Clock` interface, so tests can pass a fake clock that never really waits. |
 | `providers/transport.py` | Outside the core: sends HTTP requests (POST for URLhaus, GET for VirusTotal) with Python's `urllib`, behind a `Transport` interface that tests replace with a fake. |
 | `providers/urlhaus.py` | Outside the core: the URLhaus Provider. Looks up URLs (listed means malicious) and domains (listed means suspicious, [ADR 0005](adr/0005-urlhaus-domain-listings-are-not-decisive.md)); not listed is Unknown. |
 | `providers/virustotal.py` | Outside the core: the VirusTotal Provider. Looks URLs, domains and attachment hashes up with GET requests only (its POST endpoints would submit for scanning). At or above the decisive Engine count is malicious (never for a domain), fewer detections are suspicious, never seen is Unknown, and a URL or domain no Engine vouches for is Unknown rather than clean ([ADR 0006](adr/0006-virustotal-clean-needs-an-engine-to-vouch.md)). |
@@ -85,4 +88,4 @@ Step by step:
 
 ## What comes next
 
-Later tickets add more Providers (AbuseIPDB, RDAP), lookup orchestration (de-duplication, the URL cap, rate limits), a cache, and more rules and kinds of Observable (IP addresses).
+Later tickets add more Providers (AbuseIPDB, RDAP), a cache, and more rules and kinds of Observable (IP addresses).

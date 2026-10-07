@@ -29,6 +29,7 @@ VALID_SETTINGS = (
     '[shorteners]\ndomains = ["bit.ly"]\n'
     '[attachments]\nrisky_extensions = ["exe", ".js"]\n'
     "[virustotal]\ndecisive_engines = 3\n"
+    "[lookups]\nurl_cap = 10\n"
 )
 
 
@@ -257,6 +258,11 @@ def test_settings_option_loads_an_edited_settings_file(
             "missing section [virustotal]",
             id="missing virustotal section",
         ),
+        pytest.param(
+            VALID_SETTINGS.replace("url_cap = 10", "url_cap = -1"),
+            "lookups.url_cap must not be negative",
+            id="negative url cap",
+        ),
     ],
 )
 def test_broken_settings_file_exits_7_with_a_clear_error(
@@ -313,6 +319,7 @@ class ListsEverything:
 
     name = "FakeIntel"
     handles = frozenset({ObservableKind.URL})
+    lookups_per_minute = None
 
     def lookup(self, observable: Observable) -> Lookup:
         return Lookup(Outcome.MALICIOUS, "listed for testing")
@@ -338,3 +345,30 @@ def test_without_api_keys_links_are_not_checked_so_the_email_cannot_be_clean(
     assert "Capped:   Raised from clean to suspicious" in out
     assert "URLhaus: URL hxxps://evil[.]example/x -> not checked (no API key)" in out
     assert "VirusTotal: URL hxxps://evil[.]example/x -> not checked (no API key)" in out
+
+
+class QuickFakeProvider:
+    """A fake Provider allowing 60,000 lookups a minute, so it waits only about 1ms between them."""
+
+    name = "FakeIntel"
+    handles = frozenset({ObservableKind.URL, ObservableKind.DOMAIN})
+    lookups_per_minute = 60_000
+
+    def lookup(self, observable: Observable) -> Lookup:
+        return Lookup(Outcome.UNKNOWN, "not listed")
+
+
+def test_progress_goes_to_stderr_defanged_and_json_output_stays_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email_path = tmp_path / "link.eml"
+    email_path.write_text("From: a@example.org\nSubject: Hi\n\nhttps://evil.example/x\n")
+
+    main([str(email_path), "--json"], providers=[QuickFakeProvider()])
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["verdict"] == "clean"
+    assert "Looking up 1 of 2: FakeIntel, Domain evil[.]example\n" in captured.err
+    assert "for FakeIntel's rate limit...\n" in captured.err
+    assert "Looking up 2 of 2: FakeIntel, URL hxxps://evil[.]example/x\n" in captured.err
+    assert "evil.example" not in captured.err
