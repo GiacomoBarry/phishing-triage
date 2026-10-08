@@ -108,8 +108,7 @@ def run_lookups(
     A Provider that says to stop asking isn't asked again in this Triage.
     A fresh answer in `cache` is used instead of asking (or waiting).
     """
-    urls = [o for o in observables if o.kind is ObservableKind.URL]
-    over_cap = set(urls[url_cap:])
+    over_cap = over_lookup_cap(observables, url_cap)
     # sorted() is stable, so within each kind the email's order is kept.
     in_order = sorted(observables, key=lambda o: LOOKUP_ORDER.index(o.kind))
     turns = [_ProviderTurns(provider, clock) for provider in providers]
@@ -145,6 +144,12 @@ def run_lookups(
             )
         )
     return results
+
+
+def over_lookup_cap(observables: Sequence[Observable], url_cap: int) -> set[Observable]:
+    """The URLs that won't be looked up: every one after the first `url_cap`, in email order."""
+    urls = [o for o in observables if o.kind is ObservableKind.URL]
+    return set(urls[url_cap:])
 
 
 def find_not_checked(

@@ -23,6 +23,7 @@ from phishing_triage.core.lookups import (
     Progress,
     ProviderStopped,
     WaitingForRateLimit,
+    over_lookup_cap,
 )
 from phishing_triage.core.observables import LABELS, Observable, ObservableKind, defanged
 from phishing_triage.core.providers import ABUSEIPDB, RDAP, URLHAUS, VIRUSTOTAL, Lookup, Outcome, Provider
@@ -72,5 +73,6 @@ __all__ = [
     "describe_finding",
     "display_filename",
     "incident_note",
+    "over_lookup_cap",
     "triage",
 ]

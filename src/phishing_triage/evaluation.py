@@ -34,13 +34,13 @@ from phishing_triage.core import (
     Clock,
     LookupCache,
     Observable,
-    ObservableKind,
     Provider,
     Rule,
     Settings,
     SystemClock,
     UnparseableEmailError,
     Verdict,
+    over_lookup_cap,
     triage,
 )
 from phishing_triage.core.rules import BUILT_IN_RULES
@@ -297,8 +297,8 @@ def _lookup_estimate(results: list[SampleResult], providers: Sequence[Provider],
         if isinstance(result.outcome, Failed):
             continue
         observables = result.outcome.observables
-        urls = [o for o in observables if o.kind is ObservableKind.URL]
-        to_look_up = [o for o in observables if o.kind is not ObservableKind.URL] + urls[:url_cap]
+        over_cap = over_lookup_cap(observables, url_cap)
+        to_look_up = [o for o in observables if o not in over_cap]
         for provider in providers:
             counts[provider.name] += sum(1 for o in to_look_up if o.kind in provider.handles)
     lines = [f"Up to {sum(counts.values())} Reputation Lookups (fewer if answers are cached):"]
