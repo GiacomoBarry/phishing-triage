@@ -619,8 +619,27 @@ def test_without_an_abuseipdb_key_the_claimed_origin_is_not_checked(
 PHISH = "From: PayPal <service@paypa1.com>\nSubject: Your account is locked\n\nVerify: https://evil.example/x\n"
 
 
+def open_wrapper_text(attached: str) -> str:
+    """A Wrapper Email's text, with `attached` attached as an email, for attaching inside another."""
+    return "\n".join(
+        [
+            "From: Sam Smith <sam@example.org>",
+            "Subject: Fwd: Fwd: is this real?",
+            "MIME-Version: 1.0",
+            'Content-Type: multipart/mixed; boundary="inner"',
+            "",
+            "--inner",
+            "Content-Type: message/rfc822",
+            "",
+            attached,
+            "--inner--",
+            "",
+        ]
+    )
+
+
 def wrapper_email(tmp_path: Path, attached: str | None = PHISH) -> str:
-    """Save a user's report to the reporting mailbox, with `attached` attached as an email."""
+    """Save a Wrapper Email (a user's report of a phish), with `attached` attached as an email."""
     lines = [
         "From: Jo Bloggs <jo@example.org>",
         "Subject: Fwd: is this real?",
@@ -635,7 +654,7 @@ def wrapper_email(tmp_path: Path, attached: str | None = PHISH) -> str:
     if attached is not None:
         lines += ["--b", "Content-Type: message/rfc822", "Content-Disposition: attachment", "", attached]
     lines.append("--b--")
-    path = tmp_path / "report.eml"
+    path = tmp_path / "wrapper.eml"
     path.write_text("\n".join(lines) + "\n")
     return str(path)
 
@@ -650,10 +669,32 @@ def test_a_wrapper_email_is_triaged_as_given_with_a_warning_suggesting_inner(
     assert exit_code == 1
     assert "Subject:  Fwd: is this real?" in out
     assert "Warning:  This email has an email attached" in out
-    assert "Use --inner to triage the attached email instead." in out
+    # The Triage Report's warning doesn't know about command-line flags; the readable view adds the hint.
+    assert "If so, triage the attached email instead." in out
+    assert "Hint:     Use --inner to triage the attached email instead." in out
 
 
-def test_inner_triages_the_attached_email_and_the_report_records_the_wrapper(
+def test_several_attached_emails_get_a_hint_to_triage_the_first(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    two_attached = PHISH + "--b\nContent-Type: message/rfc822\n\n" + PHISH
+
+    main([wrapper_email(tmp_path, attached=two_attached)])
+
+    assert "Hint:     Use --inner to triage the first attached email instead." in capsys.readouterr().out
+
+
+def test_the_inner_hint_is_not_given_once_inner_was_used(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main([wrapper_email(tmp_path, attached=open_wrapper_text(PHISH)), "--inner"])
+
+    out = capsys.readouterr().out
+    assert "Warning:  The triaged email has an email attached too." in out
+    assert "Hint:" not in out
+
+
+def test_inner_triages_the_attached_email_and_the_triage_report_records_the_wrapper(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     wrapper = wrapper_email(tmp_path)
@@ -664,7 +705,7 @@ def test_inner_triages_the_attached_email_and_the_report_records_the_wrapper(
     assert exit_code == 2  # The attached phish's link is malicious.
     assert printed["subject"] == "Your account is locked"
     assert printed["taken_from_wrapper_sha256"] == hashlib.sha256(Path(wrapper).read_bytes()).hexdigest()
-    assert printed["source_sha256"] != printed["taken_from_wrapper_sha256"]
+    assert printed["source_sha256"] == hashlib.sha256(PHISH.encode()).hexdigest()
     assert printed["warnings"] == [
         "Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself."
     ]
@@ -685,7 +726,11 @@ def test_inner_with_no_attached_email_exits_8_with_a_clear_error(
 
     assert exit_code == 8
     err = capsys.readouterr().err
-    assert "report.eml has no email attached, so --inner has nothing to triage." in err
+    # The core's own explanation is kept, and the CLI says what to do about it.
+    assert (
+        "wrapper.eml: The email has no email attached, so there is no attached email to triage."
+        " Leave out --inner to triage the email itself." in err
+    )
     assert saved_reports(tmp_path) == []
 
 

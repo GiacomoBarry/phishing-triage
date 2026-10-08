@@ -112,8 +112,8 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
     except UnparseableEmailError as error:
         _print_error(f"{email_path} is not a parseable email. {error}")
         return ExitCode.UNPARSEABLE_EMAIL
-    except NoAttachedEmailError:
-        _print_error(f"{email_path} has no email attached, so --inner has nothing to triage.")
+    except NoAttachedEmailError as error:
+        _print_error(f"{email_path}: {error} Leave out --inner to triage the email itself.")
         return ExitCode.NO_ATTACHED_EMAIL
 
     # Print before saving, so the analyst still sees the Verdict if saving fails.
@@ -171,7 +171,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--inner",
         action="store_true",
-        help="triage the email attached inside a Wrapper Email (a user's report) instead of the report itself",
+        help="triage the email attached inside a Wrapper Email (a user's report of a phish) instead of the Wrapper Email itself",
     )
     parser.add_argument(
         "--no-cache",
@@ -208,6 +208,7 @@ def _readable_view(report: TriageReport) -> str:
     if report.cap_reason:
         lines.append(f"Capped:   {report.cap_reason}")
     lines += [f"Warning:  {warning}" for warning in report.warnings]
+    lines += _inner_hint(report)
     lines += ["", *_authentication_lines(report), "", *_received_lines(report)]
     lines += ["", "Attachments:"]
     for attachment in report.attachments:
@@ -236,6 +237,18 @@ def _readable_view(report: TriageReport) -> str:
         lines.append("  - None.")
     lines += ["", "Incident Note", "-------------", incident_note(report)]
     return "\n".join(lines)
+
+
+def _inner_hint(report: TriageReport) -> list[str]:
+    """Suggest --inner when the email given has an email attached.
+
+    The core's warning names no flag, so the hint is added here. Once --inner
+    has been used it isn't repeated: --inner only looks one level deep.
+    """
+    if report.taken_from_wrapper_sha256 or not report.attached_emails():
+        return []
+    which = "the attached email" if len(report.attached_emails()) == 1 else "the first attached email"
+    return [f"Hint:     Use --inner to triage {which} instead."]
 
 
 def _authentication_lines(report: TriageReport) -> list[str]:

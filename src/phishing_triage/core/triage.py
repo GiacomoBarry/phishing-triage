@@ -3,6 +3,7 @@
 import hashlib
 import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email import policy
 from email.message import EmailMessage
@@ -54,12 +55,15 @@ def triage(
     the caller can show progress; the core itself never prints. `cache`, if
     given, supplies fresh earlier answers and keeps new ones. `inner` triages
     the email attached inside a Wrapper Email instead of the email itself.
-    Raises UnparseableEmailError if the bytes are not an email at all, and
-    NoAttachedEmailError if `inner` is set but no email is attached.
+    Raises UnparseableEmailError if the bytes are not an email at all (the
+    UnparseableAttachedEmailError kind if it is the attached email that isn't),
+    and NoAttachedEmailError if `inner` is set but no email is attached.
     """
     clock = clock or SystemClock()
     now = datetime.fromtimestamp(clock.now(), UTC)
-    raw_email, message, taken_from_wrapper_sha256, warnings = _choose_email(raw_email, inner)
+    chosen = _choose_email(raw_email, inner)
+    raw_email, message = chosen.raw, chosen.message
+    warnings = _wrapper_warnings(chosen)
 
     from_address, display_name = _sender(message)
     if not from_address:
@@ -102,7 +106,7 @@ def triage(
         analysed_at=now,
         tool_version=TOOL_VERSION,
         source_sha256=hashlib.sha256(raw_email).hexdigest(),
-        taken_from_wrapper_sha256=taken_from_wrapper_sha256,
+        taken_from_wrapper_sha256=chosen.wrapper_sha256,
         from_address=from_address,
         display_name=display_name,
         subject=str(message.get("Subject", "")),
@@ -122,45 +126,72 @@ def triage(
     )
 
 
-def _choose_email(raw_email: bytes, inner: bool) -> tuple[bytes, EmailMessage, str, list[str]]:
-    """Pick the email to triage: the one given, or (with `inner`) the email attached inside it.
+@dataclass(frozen=True)
+class _ChosenEmail:
+    """The email a Triage is run on, and how it relates to any Wrapper Email."""
 
-    Returns the chosen email's bytes and parsed message, the SHA-256 of the
-    Wrapper Email it was taken from ("" if none) and any warnings about the choice.
-    """
+    raw: bytes
+    message: EmailMessage
+    # The SHA-256 of the Wrapper Email it was taken from, or "" if it is the email given.
+    wrapper_sha256: str
+    emails_in_wrapper: int  # How many emails that Wrapper Email had attached (0 if none was used).
+    emails_attached: int  # How many emails are attached directly to the chosen email.
+
+
+def _choose_email(raw_email: bytes, inner: bool) -> _ChosenEmail:
+    """Pick the email to triage: the one given, or (with `inner`) the first email attached inside it."""
     message = _parse(raw_email)
     attached_emails = find_attached_emails(raw_email)
-    count = len(attached_emails)
     if not inner:
-        if count == 0:
-            return raw_email, message, "", []
-        has_attached = "an email attached" if count == 1 else f"{count} emails attached"
-        which = "the attached email" if count == 1 else "the first attached email"
-        return raw_email, message, "", [
-            f"This email has {has_attached}, so it may be a user's report (a Wrapper Email)"
-            f" rather than the suspected phish itself. Use --inner to triage {which} instead."
-        ]
-
-    if count == 0:
-        raise NoAttachedEmailError("There is no email attached to triage instead.")
-    wrapper_sha256 = hashlib.sha256(raw_email).hexdigest()
-    chosen = attached_emails[0]
-    warnings = ["Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself."]
-    if count > 1:
-        warnings.append(
-            f"The Wrapper Email has {count} emails attached. Only the first was triaged;"
-            " extract the others by hand to triage them."
+        return _ChosenEmail(
+            raw_email, message, wrapper_sha256="", emails_in_wrapper=0, emails_attached=len(attached_emails)
         )
+
+    if not attached_emails:
+        raise NoAttachedEmailError("The email has no email attached, so there is no attached email to triage.")
+    chosen = attached_emails[0]
     try:
         chosen_message = _parse(chosen)
     except UnparseableEmailError as error:
         raise UnparseableAttachedEmailError(f"The attached email is not a parseable email. {error}") from error
-    if find_attached_emails(chosen):
+    return _ChosenEmail(
+        chosen,
+        chosen_message,
+        wrapper_sha256=hashlib.sha256(raw_email).hexdigest(),
+        emails_in_wrapper=len(attached_emails),
+        emails_attached=len(find_attached_emails(chosen)),
+    )
+
+
+def _wrapper_warnings(chosen: _ChosenEmail) -> list[str]:
+    """Warn that the email may be a Wrapper Email, or say that it was taken from inside one.
+
+    The wording names no command-line flag: the core doesn't know how it was
+    called. The CLI adds its own hint about --inner (ADR 0014).
+    """
+    if not chosen.wrapper_sha256:
+        if chosen.emails_attached == 0:
+            return []
+        count = chosen.emails_attached
+        has_attached = "an email attached" if count == 1 else f"{count} emails attached"
+        which = "the attached email" if count == 1 else "the first attached email"
+        return [
+            f"This email has {has_attached}, so it may be a user's report (a Wrapper Email)"
+            f" rather than the suspected phish itself. If so, triage {which} instead."
+        ]
+
+    warnings = ["Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself."]
+    if chosen.emails_in_wrapper > 1:
         warnings.append(
-            "The triaged email has an email attached too. --inner only looks one level deep,"
-            " so extract that one by hand to triage it."
+            f"The Wrapper Email has {chosen.emails_in_wrapper} emails attached. Only the first was triaged;"
+            " extract the others by hand to triage them."
         )
-    return chosen, chosen_message, wrapper_sha256, warnings
+    if chosen.emails_attached:
+        warnings.append(
+            "The triaged email has an email attached too. Only emails attached directly to the"
+            " Wrapper Email can be triaged, so extract that one by hand to triage it."
+        )
+    return warnings
 
 
 def _parse(raw_email: bytes) -> EmailMessage:

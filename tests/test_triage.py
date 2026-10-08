@@ -2384,7 +2384,7 @@ def a_wrapper_email(*attached: EmailMessage) -> EmailMessage:
 
 WRAPPER_WARNING = (
     "This email has an email attached, so it may be a user's report (a Wrapper Email)"
-    " rather than the suspected phish itself. Use --inner to triage the attached email instead."
+    " rather than the suspected phish itself. If so, triage the attached email instead."
 )
 
 
@@ -2452,7 +2452,7 @@ def test_inner_works_on_an_email_attached_as_an_eml_file() -> None:
     ],
 )
 def test_inner_with_no_attached_email_is_refused(raw: bytes) -> None:
-    with pytest.raises(NoAttachedEmailError, match="no email attached"):
+    with pytest.raises(NoAttachedEmailError, match="^The email has no email attached"):
         triage(raw, DEFAULT_SETTINGS, providers=[], inner=True)
 
 
@@ -2463,7 +2463,7 @@ def test_several_attached_emails_are_counted_in_the_warning() -> None:
 
     assert report.warnings == [
         "This email has 3 emails attached, so it may be a user's report (a Wrapper Email)"
-        " rather than the suspected phish itself. Use --inner to triage the first attached email instead."
+        " rather than the suspected phish itself. If so, triage the first attached email instead."
     ]
 
 
@@ -2488,8 +2488,8 @@ def test_inner_says_when_the_attached_email_has_an_email_attached_too() -> None:
     assert report.subject == "Fwd: is this real?"
     assert report.warnings == [
         "Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself.",
-        "The triaged email has an email attached too. --inner only looks one level deep,"
-        " so extract that one by hand to triage it.",
+        "The triaged email has an email attached too. Only emails attached directly to the"
+        " Wrapper Email can be triaged, so extract that one by hand to triage it.",
     ]
 
 

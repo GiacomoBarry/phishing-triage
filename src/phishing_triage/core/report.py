@@ -17,6 +17,7 @@ from phishing_triage.core.lookups import LookupResult, NotChecked
 from phishing_triage.core.observables import Observable
 from phishing_triage.core.providers import Outcome
 from phishing_triage.core.received import ClaimedOrigin, ReceivedHop
+from phishing_triage.core.wrapper import is_attached_email
 
 FORMAT_VERSION = 1
 
@@ -76,6 +77,10 @@ class TriageReport:
     # Reserved for MITRE ATT&CK mapping in a later phase.
     tags: list[str] = field(default_factory=list)
     format_version: int = FORMAT_VERSION
+
+    def attached_emails(self) -> list[Attachment]:
+        """Return the attachments that are themselves emails, in the order they appear (ADR 0014)."""
+        return [a for a in self.attachments if is_attached_email(a.content_type, a.filename)]
 
     def iocs(self) -> list[Observable]:
         """Every IOC: each Observable a Provider reported as malicious, in email order."""
