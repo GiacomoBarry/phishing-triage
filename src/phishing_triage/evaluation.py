@@ -1,11 +1,17 @@
-"""Offline evaluation: run the rules over a folder of labelled samples.
+"""Evaluation: run the triage over a folder of labelled samples and count the Verdicts.
 
-    phishing-triage-evaluate [samples] [--list] [--settings PATH]
+    phishing-triage-evaluate [samples] [--list] [--live] [--sample N] [--seed N] [--settings PATH]
 
 The samples folder has a phish/ and a ham/ subfolder (scripts/download_datasets.py
-fills them). Every file in each is triaged with no Providers, so nothing
-touches the network, and the command prints how many phish and how many ham
-emails got each Verdict, to catch false positives early (ADR 0015).
+fills them). By default every file in each is triaged with no Providers, so
+nothing touches the network, and the command prints how many phish and how
+many ham emails got each Verdict, to catch false positives early (ADR 0015).
+
+With --live, a small reproducible sample is triaged with the real Providers
+instead, keeping to their rate limits across the whole run and using the
+reputation cache. It warns how many lookups it will make first, counts the
+final Verdicts and the Not Checked Observables, and prints the offline counts
+for the same sample to compare (ADR 0016).
 
 Like the CLI, this lives outside the core: it reads files and prints.
 """
@@ -67,7 +73,8 @@ class SampleResult:
 
     label: str  # "phish" or "ham"
     path: Path
-    verdict: Verdict | None  # The Verdict before the cap, or None if the sample failed
+    # The Verdict (before the cap offline, final live), or None if the sample failed.
+    verdict: Verdict | None
     failure: Failure | None  # Why there is no Verdict, or None if there is one
     score: int | None  # None if the sample failed
     # The rule IDs of the Findings, or why the sample failed.
@@ -328,7 +335,7 @@ def _real_providers(settings: Settings) -> list[Provider]:
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = ArgumentParser(
         prog="phishing-triage-evaluate",
-        description="Count the Verdicts the rules give a folder of phish and ham samples, offline.",
+        description="Count the Verdicts given to a folder of phish and ham samples: offline by default, or with --live lookups.",
     )
     parser.add_argument(
         "samples",

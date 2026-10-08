@@ -140,7 +140,15 @@ _Avoid_: Clean email (clean is a Verdict), benign, negative
 
 **Offline Evaluation**:
 Running the rules over every Phish and Ham sample with no Providers, and counting the Verdict each gets from before the clean-requires-evidence cap (ADR 0015). It measures the rules and weights alone.
-_Avoid_: Benchmark, test run, live evaluation (that one asks the real Providers)
+_Avoid_: Benchmark, test run, Live Evaluation (that one asks the real Providers)
+
+**Live Evaluation**:
+Running the evaluation over a small, reproducible sample of Phish and Ham with the real Providers, counting each sample's final Verdict (after the clean-requires-evidence cap) and how many Observables were Not Checked, next to the Offline Evaluation's counts for the same sample (ADR 0016). It shows what Reputation Lookups change.
+_Avoid_: Online evaluation, full evaluation (it only takes a sample)
+
+**Sample Size**:
+How many Phish and how many Ham an evaluation takes (`--sample N`): 20 of each by default for a Live Evaluation, every sample for an Offline Evaluation. The same seed always picks the same samples.
+_Avoid_: Batch size, limit
 
 **Unparseable Sample**:
 A sample that isn't an email, so it gets no Verdict. Counted in the Offline Evaluation's table but left out of both rates.

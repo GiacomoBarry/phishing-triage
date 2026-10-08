@@ -1,7 +1,9 @@
 """Tests at the evaluation command's seam: `phishing_triage.evaluation.main`.
 
 The command runs the core over a samples folder (phish/ and ham/ subfolders)
-with no Providers, and prints how many of each got each Verdict. The fixture
+with no Providers, and prints how many of each got each Verdict. With --live
+it asks Providers instead: the tests pass fake ones (and a fake clock), and
+the network is blocked throughout. The fixture
 folder holds hand-made emails whose Verdicts were worked out by hand:
 
     phish/  delivery_shortener (malicious), paypal_lookalike (malicious),

@@ -126,10 +126,39 @@ flowchart LR
 
 | File | What it does |
 |---|---|
-| `evaluation.py` | The `phishing-triage-evaluate` command: finds the samples, triages each offline, counts the Verdicts and works out the two rates. `main()` takes `rules` like `triage()` does, so tests can pass a rule that fails on purpose. |
+| `evaluation.py` | The `phishing-triage-evaluate` command: finds the samples (or a `--sample` of them), triages each offline, counts the Verdicts and works out the two rates. `main()` takes `rules` like `triage()` does, so tests can pass a rule that fails on purpose. |
 | `scripts/download_datasets.py` | Downloads the datasets. It reads each archive and writes each email under its plain file name (`_save_emails`), so a crafted archive can't write outside its folder. The download is never run by tests; `tests/test_download_datasets.py` checks the archive handling on tiny archives built in the test. |
 | `tests/fixtures/evaluation/` | A tiny hand-made samples folder (five phish, one of them not an email, and three ham) whose Verdicts were worked out by hand, used by `tests/test_evaluation.py`. |
 
+## The Live Evaluation
+
+`phishing-triage-evaluate --live` runs the same evaluation with the real Providers, over a small sample, to see how Reputation Lookups change the numbers ([ADR 0016](adr/0016-live-evaluation-paces-providers-across-the-whole-run.md)).
+
+```mermaid
+flowchart LR
+    samples["samples/phish/ and samples/ham/"] -->|"--sample N, --seed:<br/>a seeded random pick"| evaluation["evaluation.py<br/>--live"]
+    evaluation -->|"1. offline pass:<br/>no Providers"| core["Core: triage()"]
+    core -->|"Observables, offline Verdicts"| evaluation
+    evaluation -->|"2. lookup estimate<br/>(before any lookup)"| stderr["Terminal (stderr)"]
+    env[".env API keys"] -->|"build_providers()"| providers["Real Providers"]
+    providers --> pacing["RunWidePacing<br/>run_wide_pacing.py<br/>(one per Provider, for the whole run)"]
+    pacing -->|"3. live pass:<br/>paced Providers, clock, cache"| core
+    cachefile[".cache/lookups.json"] <-.->|"get / put"| core
+    core -->|"final Verdicts,<br/>Not Checked Observables"| evaluation
+    evaluation -->|"live table, Not Checked count, rates,<br/>then the offline table to compare"| terminal["Terminal (stdout)"]
+```
+
+1. It picks `--sample N` phish and N ham (20 by default) with a seeded random generator, so the same folder and `--seed` always give the same emails. Offline runs accept `--sample` too, for comparing on the same emails.
+2. It triages the sample offline first. That finds each email's Observables, so before any lookup it can warn, on stderr, the most lookups each Provider could get (URLs over the Lookup Cap left out) and how long its rate limit makes that take.
+3. It wraps each Provider in `RunWidePacing`, which keeps to the Provider's rate limit across every email in the run (the core only paces within one Triage) and stops asking a Provider for the rest of the run once it says to stop. The wrapper tells the core it has no limit, so the waiting happens once, in the wrapper.
+4. It triages the sample again with the wrapped Providers, the clock and the CLI's cache (`JsonFileCache`), and keeps each final Verdict (after the cap) and how many Observables were Not Checked.
+5. It prints the live table, the Not Checked count and the rates, then the offline table and rates for the same sample.
+
+| File | What it does |
+|---|---|
+| `evaluation.py` | With `--live`: picks the sample, warns about the lookups, runs both passes and prints both tables. `main()` takes `providers` and `clock`, so tests pass fake Providers and a fake clock. |
+| `run_wide_pacing.py` | `RunWidePacing`: a Provider wrapper that remembers the last lookup and any "stop asking" answer for the whole run, not just one Triage. |
+
 ## What comes next
 
-A later ticket adds a live evaluation: a small sample run with the real Providers.
+Tuning the weights against the offline baseline, and recording the before and after.
