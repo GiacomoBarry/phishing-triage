@@ -1,0 +1,15 @@
+From: Garden Club <club@example.org>
+Reply-To: Garden Club Secretary <secretary@example.net>
+To: Recipient <recipient@example.com>
+Subject: Autumn show dates
+Date: Wed, 07 Oct 2026 08:30:00 +0000
+Message-ID: <20261007083000.3333@example.org>
+Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=example.org; dkim=pass header.d=example.org; dmarc=fail header.from=example.org
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Hello members,
+
+The autumn show is on the 24th. Reply to this email to book a table.
+
+The Garden Club

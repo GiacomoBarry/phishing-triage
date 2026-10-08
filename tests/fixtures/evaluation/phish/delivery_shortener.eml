@@ -1,0 +1,13 @@
+From: Royal Mail <noreply@parcel-redelivery.example>
+To: Recipient <recipient@example.com>
+Subject: Final notice: your parcel is waiting
+Date: Thu, 08 Oct 2026 11:45:00 +0000
+Message-ID: <20261008114500.5555@parcel-redelivery.example>
+Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=parcel-redelivery.example; dkim=fail; dmarc=fail
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Your parcel could not be delivered. Pay the redelivery fee here:
+https://bit.ly/3xYzAbC
+
+Royal Mail
