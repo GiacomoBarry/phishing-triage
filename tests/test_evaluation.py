@@ -530,3 +530,30 @@ def test_a_provider_that_says_to_stop_asking_is_not_asked_again_for_the_rest_of_
     captured = capsys.readouterr()
     assert len(provider.asked_at) == 1
     assert "Not asking FakeIntel again in this evaluation: rate limited" in captured.err
+
+
+def test_live_mode_uses_the_reputation_cache_so_a_rerun_asks_nothing_again(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main([str(SAMPLES), "--live"], providers=[ListsEveryURL()])
+    first = capsys.readouterr().out
+    rerun = ListsEveryURL()
+
+    main([str(SAMPLES), "--live"], providers=[rerun])
+
+    assert rerun.asked == []
+    assert row(capsys.readouterr().out, "phish") == row(first, "phish")
+    assert (in_tmp_path / ".cache" / "lookups.json").exists()
+
+
+def test_a_cache_that_cannot_be_saved_does_not_stop_a_live_run(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (in_tmp_path / ".cache").write_text("a file where the folder should be")
+
+    exit_code = main([str(SAMPLES), "--live"], providers=[ListsEveryURL()])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert row(captured.out, "phish") == ["phish", "0", "1", "3", "1", "0", "5"]
+    assert "Warning: could not save the cache" in captured.err

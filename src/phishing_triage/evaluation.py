@@ -21,11 +21,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from phishing_triage.cache_file import JsonFileCache
 from phishing_triage.command_line import ArgumentParser, ExitCode, print_error
 from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     SAFETY_MARGIN,
     Clock,
+    LookupCache,
     Observable,
     ObservableKind,
     Provider,
@@ -125,8 +127,11 @@ def main(
         print(_lookup_estimate(offline_results, providers, settings.url_cap), file=sys.stderr, flush=True)
         print(f"Triaging {len(samples)} samples with live lookups...", file=sys.stderr, flush=True)
         clock = clock or SystemClock()
-        live = _LiveLookups([RunWidePacing(provider, clock) for provider in providers], clock)
+        cache = JsonFileCache()  # The CLI's cache: answers it has are used, new ones kept.
+        live = _LiveLookups([RunWidePacing(provider, clock) for provider in providers], clock, cache)
         results = [_evaluate_sample(label, path, settings, rules, live) for label, path in samples]
+        if cache.save_error:
+            print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
         print(f"Live evaluation of {args.samples}: rules plus Reputation Lookups.")
         print("Verdicts are the final ones, after the clean-requires-evidence cap.")
     else:
@@ -150,10 +155,11 @@ def main(
 
 @dataclass(frozen=True)
 class _LiveLookups:
-    """What a live run triages each sample with: the paced Providers, and the clock they wait on."""
+    """What a live run triages each sample with: the paced Providers, the clock they wait on, and the cache."""
 
     providers: list[Provider]
     clock: Clock
+    cache: LookupCache
 
 
 def _evaluate_sample(
@@ -183,7 +189,7 @@ def _evaluate_sample(
         if live is None:
             report = triage(raw_email, settings, providers=[], rules=rules)
         else:
-            report = triage(raw_email, settings, live.providers, rules=rules, clock=live.clock)
+            report = triage(raw_email, settings, live.providers, rules=rules, clock=live.clock, cache=live.cache)
     except UnparseableEmailError as error:
         return _failed(label, path, Failure.UNPARSEABLE, str(error))
     # Deliberately broad: real datasets hold emails odd enough to trip up the
