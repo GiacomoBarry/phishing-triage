@@ -27,7 +27,7 @@ flowchart LR
 
     subgraph core["Core: triage() in core/triage.py"]
         direction TB
-        parse["Parse the email"] --> headers["Read Authentication Results<br/>core/authentication.py<br/>and the Received chain, Claimed Origin<br/>core/received.py"]
+        parse["Parse the email<br/>with --inner: pick the attached email<br/>core/wrapper.py"] --> headers["Read Authentication Results<br/>core/authentication.py<br/>and the Received chain, Claimed Origin<br/>core/received.py"]
         headers --> attach["Describe attachments<br/>core/attachments.py"]
         attach --> extract["Extract Observables<br/>core/observables.py, core/urls.py"]
         extract --> lookups["Reputation Lookups<br/>sender and link domains first,<br/>URL cap, rate-limit waits<br/>core/lookups.py"]
@@ -44,7 +44,7 @@ flowchart LR
     note -->|Incident Note text| cli
     cli -->|readable view or --json| terminal["Terminal"]
     cli -->|JSON file| reports["reports/&lt;report-id&gt;.json"]
-    cli -->|exit code 0-7| shell["Shell / scripts"]
+    cli -->|exit code 0-8| shell["Shell / scripts"]
     lookups -.->|"progress events (on_progress)"| cli
     cli -.->|progress lines| stderr["stderr"]
 ```
@@ -54,14 +54,14 @@ Step by step:
 1. The CLI loads the settings: the shipped `settings.toml`, or the edited copy given with `--settings`. If the copy is missing or invalid, it stops with exit code 7.
 2. The CLI reads the `.eml` file as bytes. If it can't (missing file, no permission), it stops with exit code 3.
 3. The CLI builds the Providers, taking API keys from `.env` or the environment (a missing key gives a Provider that answers Not Checked) and the decisive Engine count from the settings, and calls `triage()` in the core.
-4. The core parses the email. If the input has none of the standard email headers (From, To, Subject, Date and so on), it raises `UnparseableEmailError` and the CLI stops with exit code 4.
+4. The core parses the email. If the input has none of the standard email headers (From, To, Subject, Date and so on), it raises `UnparseableEmailError` and the CLI stops with exit code 4. It then looks for emails attached directly to it (declared as `message/rfc822`, or a file ending in `.eml`). Without `--inner`, finding one adds a warning that this may be a **Wrapper Email**. With `--inner`, the first attached email is parsed and triaged instead, from here on, and the Wrapper Email's SHA-256 is kept for the report; if none is attached, the core raises `NoAttachedEmailError` and the CLI stops with exit code 8 ([ADR 0014](adr/0014-attached-emails-are-message-rfc822-or-eml-files-one-level-deep.md)).
 5. The core reads the headers the mail servers added. From the topmost Authentication-Results header it takes SPF, DKIM and DMARC as recorded (pass, fail, another value, or "not recorded"). It never re-checks them. It parses each Received header into a **Hop** (who sent it, the IP seen, which server received it, when), earliest first, and picks the **Claimed Origin**. That is the public IP a **Trusted Relay** recorded, or else the earliest public IP, labelled unverified ([ADR 0011](adr/0011-trust-only-headers-added-after-the-email-reached-us.md)).
 6. The core describes each attachment: filename, declared type, size, SHA-256, MD5 and SHA-1, whether it's an archive (judged by its first bytes, name and declared type) and whether a ZIP is password-protected (from its table of contents only). Everything happens in memory; nothing is opened, unpacked or saved.
 7. The core extracts the **Observables**: the **Claimed Origin**'s IP address (the only IP that becomes an Observable), the sender's domain (a **Sender Domain**), every URL in the plain-text and HTML bodies (not attachments), decoded offline from defanged text, HTML entities and link wrappers such as SafeLinks, then each URL's domain, then each attachment's SHA-256. Nothing is ever fetched ([ADR 0001](adr/0001-reputation-lookups-only.md)).
 8. The core asks every Provider about each Observable of a kind it handles (**Reputation Lookups**): the Claimed Origin (only AbuseIPDB handles it), the Sender Domain and link domains first, then URLs (only the first 10; the rest are Not Checked, "over lookup cap"), then attachment hashes. A fresh answer in the cache is used instead of asking (and without waiting). Otherwise it waits between lookups to keep to each Provider's rate limit, and reports progress through a callback, which the CLI prints to stderr. Each answer is malicious, suspicious, clean, **Unknown** or **Not Checked** with a reason. A Provider that fails or crashes becomes Not Checked; the run carries on. A Provider that says to stop asking (unreachable, no or bad key, rate limited, or crashed) isn't asked again in this Triage ([ADR 0008](adr/0008-pace-providers-and-stop-asking-after-provider-wide-failures.md)).
 9. The core runs each red-flag rule. A rule is given a `RuleInput` (the parsed email, its Observables, its attachments, the lookup results, the Authentication Results, the Claimed Origin and the time of the Triage) and returns zero or more **Findings**, each with its points, whether it is decisive, and its evidence.
 10. The core adds up the points of the non-decisive Findings into the **Score** (capped at 100) and reaches a **Verdict**: any **Decisive Finding** means malicious, and otherwise the thresholds in the settings decide. Then, if the Verdict is clean but any URL or attachment was Not Checked, it is raised to suspicious, because clean requires evidence.
-11. The core builds the **Triage Report**: metadata (report ID, timestamp, tool version, format version, SHA-256 of the email), the sender and subject, the Authentication Results, the Received Hops and Claimed Origin, the Observables, the attachments, every lookup result, what was Not Checked, the Findings, the Score, the Verdict (and the Verdict before the cap, with the reason) and any warnings.
+11. The core builds the **Triage Report**: metadata (report ID, timestamp, tool version, format version, SHA-256 of the email triaged, and of the Wrapper Email it was taken from, if any), the sender and subject, the Authentication Results, the Received Hops and Claimed Origin, the Observables, the attachments, every lookup result, what was Not Checked, the Findings, the Score, the Verdict (and the Verdict before the cap, with the reason) and any warnings.
 12. The CLI prints either the readable view (including the **Incident Note**) or the JSON, then saves the report as JSON. Printing comes first so the analyst still sees the Verdict if saving fails (exit code 6).
 13. The CLI turns the Verdict into an exit code: 0 clean, 1 suspicious, 2 malicious.
 
@@ -69,10 +69,11 @@ Step by step:
 
 | File | What it does |
 |---|---|
-| `core/triage.py` | The one public entry point, `triage()`. It runs the pipeline: parse, read the Authentication Results and Received chain, describe attachments, extract **Observables**, make **Reputation Lookups**, apply rules, score, build the report. Optional arguments let tests pass their own `rules` and `clock`, and let the CLI pass `on_progress` to show progress. |
+| `core/triage.py` | The one public entry point, `triage()`. It runs the pipeline: parse (or, with `inner=True`, pick the email attached inside a Wrapper Email), read the Authentication Results and Received chain, describe attachments, extract **Observables**, make **Reputation Lookups**, apply rules, score, build the report. Optional arguments let tests pass their own `rules` and `clock`, and let the CLI pass `on_progress` to show progress. |
 | `core/findings.py` | Defines a **Finding**, `RuleInput` (what every rule is given: the parsed email, its Observables, its attachments, the lookup results, the Authentication Results, the Claimed Origin, and `now`, the time of the Triage from the injected clock) and the shape of a rule: a function that takes a `RuleInput` and the settings and returns a list of Findings. |
 | `core/authentication.py` | Reads SPF, DKIM and DMARC from the topmost Authentication-Results header into `AuthenticationResults` (coping with headers that don't name their server, as Microsoft 365's don't), keeping each check as recorded for evidence. Never re-checks anything with DNS. |
 | `core/received.py` | Parses each Received header into a `ReceivedHop` (earliest first), finding the IP the receiving server saw rather than the name the sender gave. `find_claimed_origin()` picks the **Claimed Origin**, following Trusted Relays down from the top only through internal hand-offs, and stopping at the first public IP ([ADR 0011](adr/0011-trust-only-headers-added-after-the-email-reached-us.md)). |
+| `core/wrapper.py` | Finds the emails attached directly to an email (`message/rfc822` parts and `.eml` files), in order, as raw bytes ready to triage. Used to warn about **Wrapper Emails** and to pick the email `--inner` triages. It walks the parts with `attachment_parts()` from `core/attachments.py`, so it never looks inside an attached email ([ADR 0014](adr/0014-attached-emails-are-message-rfc822-or-eml-files-one-level-deep.md)). |
 | `core/attachments.py` | Describes each attachment from the outside: hashes, size, declared type, archive format and the ZIP encryption flag. Also makes filenames safe to print, escaping hidden characters. It never opens, unpacks or saves a file. |
 | `core/observables.py` | Defines an **Observable** (a kind, `claimed_origin`, `sender_domain`, `url`, `domain` or `sha256`, and a value) and `extract_observables()`, which builds the list from the Claimed Origin's IP (worked out before it and passed in), the From address's domain, the email's URLs and their domains, and attachment hashes. `describe_observable()` writes one Observable as a safe-to-paste line (label, defanged value, and filenames for a hash), shared by the Incident Note's sections. |
 | `core/body.py` | Reads the email's body parts (plain text and HTML, never attachments) and turns them into the text the reader sees: HTML tags, scripts and styles removed, entities decoded. Shared by `core/urls.py` and the urgency rule. |
@@ -97,9 +98,9 @@ Step by step:
 | `providers/rdap.py` | Outside the core: the RDAP Provider. Finds the domain's registry from IANA's bootstrap list (fetched once per run), asks it when the domain was registered, and trims subdomains until the registry recognises one. Its outcome is always Unknown, with the date (or `None` for unknown age) in the evidence ([ADR 0010](adr/0010-rdap-gives-facts-and-sender-domains-are-observables.md)). |
 | `providers/abuseipdb.py` | Outside the core: the AbuseIPDB Provider. Looks the Claimed Origin's IP up with a GET request only (its POST endpoint reports an IP). No recent reports is Unknown, AbuseIPDB's allowlist is clean, and any Abuse Confidence above 0 is suspicious, with it in the evidence for the rule to judge ([ADR 0012](adr/0012-abuseipdb-reports-the-abuse-confidence-and-the-rule-applies-the-threshold.md)). |
 | `providers/__init__.py` | Outside the core: `build_providers()` builds every real Provider from the API keys in the environment. |
-| `core/errors.py` | Errors the core can raise to its caller. |
-| `cli.py` | The terminal front end: arguments, printing (including the Authentication Results, the Received chain and the Claimed Origin with its verified or unverified label), saving and exit codes. |
+| `core/errors.py` | Errors the core can raise to its caller: `UnparseableEmailError` and `NoAttachedEmailError`. |
+| `cli.py` | The terminal front end: arguments (including `--inner`), printing (including the Authentication Results, the Received chain and the Claimed Origin with its verified or unverified label), saving and exit codes. |
 
 ## What comes next
 
-Later tickets add Wrapper Email handling and an evaluation against public datasets.
+A later ticket adds an evaluation against public datasets.

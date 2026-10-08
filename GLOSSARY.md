@@ -11,7 +11,7 @@ One end-to-end analysis of one email, ending in a Verdict.
 _Avoid_: Scan, investigation
 
 **Wrapper Email**:
-An email that carries the suspected phish as an attachment, typically a user's report forwarded to a reporting mailbox.
+An email that carries the suspected phish as an attachment, typically a user's report forwarded to a reporting mailbox. The tool treats any email with an email attached directly to it (declared as `message/rfc822`, or a file ending in `.eml`) as a possible Wrapper Email (ADR 0014).
 _Avoid_: Report email, outer email, forward
 
 **Observable**:

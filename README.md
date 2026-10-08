@@ -62,6 +62,16 @@ uv run phishing-triage path/to/email.eml --json   # print the Triage Report as J
 
 Every run saves the Triage Report to `reports/<report-id>.json`. That folder is git-ignored.
 
+### Wrapper Emails and `--inner`
+
+Users often report a phish by forwarding it "as an attachment", so the `.eml` you save is their report (a **Wrapper Email**) with the real phish inside. Triaging that by mistake would judge your colleague's email, not the phish. When the email has an email attached (declared as `message/rfc822`, or a file ending in `.eml`), the readable view and the Triage Report warn you and suggest `--inner`:
+
+```sh
+uv run phishing-triage path/to/report.eml --inner   # triage the email attached inside the report
+```
+
+With `--inner`, the attached email is triaged instead. The Triage Report's `source_sha256` is the attached email's (the same as its attachment hash in the report), `taken_from_wrapper_sha256` records the Wrapper Email it came from, and a warning says it was taken from inside one. If several emails are attached, the first is triaged and the warnings say how many there were. `--inner` only looks one level deep ([ADR 0014](docs/adr/0014-attached-emails-are-message-rfc822-or-eml-files-one-level-deep.md)). If nothing is attached, it stops with exit code 8.
+
 In the readable view and the Incident Note, every URL and domain is **defanged** (`hxxps://evil[.]com/login`) so nobody can click it by accident. The `--json` output keeps the real values, because it is meant for other programs.
 
 ### How the Verdict is reached
@@ -131,6 +141,7 @@ Scripts can react to the Verdict without reading any text:
 | 5 | the command was used wrongly (for example, no file given) |
 | 6 | the Triage Report could not be saved (the Verdict is still printed) |
 | 7 | the settings file is missing or invalid |
+| 8 | `--inner` was given, but the email has no email attached |
 
 Code 2 always means malicious, so bad usage gets 5 instead of the usual 2.
 

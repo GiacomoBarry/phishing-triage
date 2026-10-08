@@ -79,7 +79,7 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Dataclass**: a class that mainly holds data, with the boilerplate generated for you; `frozen=True` makes it read-only (`TriageReport` in `core/report.py`, `Settings` in `core/settings.py`).
 - **Enum (StrEnum, IntEnum)**: a fixed set of named choices; a `StrEnum` member is also a string, so it turns into JSON easily (`Verdict` in `core/report.py`), and an `IntEnum` member is also a number, so it can be an exit code (`ExitCode` in `cli.py`).
 - **Protocol**: describes the shape an object must have, without forcing it to inherit from anything (`Provider` in `core/providers.py`).
-- **Custom exception**: a named error the caller can catch and handle on purpose (`UnparseableEmailError` in `core/errors.py`, caught in `cli.py`).
+- **Custom exception**: a named error the caller can catch and handle on purpose (`UnparseableEmailError` and `NoAttachedEmailError` in `core/errors.py`, caught in `cli.py`).
 - **Exit codes**: the number a program hands back to the shell, so scripts can react without reading any text (`ExitCode` in `cli.py`).
 - **Set intersection**: `a & b` keeps only what's in both sets, used to check that at least one standard email header is present (`_parse` in `core/triage.py`).
 - **Overriding a method**: replacing a library behaviour in a subclass; here it stops argparse's default exit code 2 clashing with "malicious" (`_ArgumentParser.error` in `cli.py`).
@@ -94,3 +94,5 @@ Programming concepts this project uses, one line each, with where they appear.
 - **`for … else`**: the `else` part runs only if the loop finished without `break`, here meaning "never got rate limited" (`main` in `scripts/capture_virustotal_fixtures.py`).
 - **Nested functions (closures)**: a function defined inside another can use the outer one's variables, such as the key and transport, without them being passed in (`save` and `look_up` in `scripts/capture_virustotal_fixtures.py`). A function can also build and return one, which remembers the outer variables: `_fixed(text)` returns a wording function that always gives back `text` (`core/recommended_actions.py`).
 - **Secrets in `.env`**: API keys stay in a git-ignored file, and `.env.example` lists the names without values (`.gitignore`, `.env.example`).
+- **Tuple return (returning several values)**: a function can hand back several values at once as a tuple, unpacked by the caller in one line (`_choose_email` in `core/triage.py` returns the email's bytes, the parsed message, the Wrapper Email's SHA-256 and warnings).
+- **Keyword argument with a default**: an optional switch that leaves existing callers unchanged (`inner: bool = False` on `triage()` in `core/triage.py`, set by `--inner` in `cli.py`).
