@@ -7,12 +7,10 @@ exit code that scripts can react to.
 
 import argparse
 import json
-import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from dotenv import load_dotenv
 
 from phishing_triage.cache_file import JsonFileCache, WriteOnlyCache
 from phishing_triage.command_line import ArgumentParser, ExitCode, print_error
@@ -24,7 +22,6 @@ from phishing_triage.core import (
     Progress,
     ProviderStopped,
     Provider,
-    Settings,
     TriageReport,
     UnparseableAttachedEmailError,
     UnparseableEmailError,
@@ -35,7 +32,7 @@ from phishing_triage.core import (
     incident_note,
     triage,
 )
-from phishing_triage.providers import build_providers
+from phishing_triage.providers import real_providers
 
 REPORTS_DIR = Path("reports")
 
@@ -69,7 +66,7 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
 
     try:
         if providers is None:
-            providers = _real_providers(settings)
+            providers = real_providers(settings)
         cache = JsonFileCache()
         report = triage(
             raw_email,
@@ -121,15 +118,6 @@ def _show_progress(event: Progress) -> None:
     else:
         message = f"Waiting {event.seconds:.0f}s for {event.provider}'s rate limit..."
     print(message, file=sys.stderr, flush=True)
-
-
-def _real_providers(settings: Settings) -> list[Provider]:
-    """Build the real Providers, reading API keys from .env (if present) and the environment.
-
-    Keys already set in the environment win over the .env file.
-    """
-    load_dotenv(Path(".env"))
-    return build_providers(os.environ, settings)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:

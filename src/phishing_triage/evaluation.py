@@ -17,7 +17,6 @@ Like the CLI, this lives outside the core: it reads files and prints.
 """
 
 import argparse
-import os
 import random
 import sys
 from collections.abc import Callable, Sequence
@@ -25,7 +24,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from dotenv import load_dotenv
 
 from phishing_triage.cache_file import JsonFileCache
 from phishing_triage.command_line import ArgumentParser, ExitCode, print_error
@@ -45,7 +43,7 @@ from phishing_triage.core import (
     triage,
 )
 from phishing_triage.core.rules import BUILT_IN_RULES
-from phishing_triage.providers import build_providers
+from phishing_triage.providers import real_providers
 from phishing_triage.run_wide_pacing import RunWidePacing
 
 SAMPLES_DIR = Path("samples")  # Ignored by git: raw samples hold real people's addresses
@@ -152,7 +150,7 @@ def main(
     # Live, the offline pass has found each sample's Observables, so the
     # warning can say how many lookups there will be before any is made.
     if providers is None:
-        providers = _real_providers(settings)
+        providers = real_providers(settings)
     print(_lookup_estimate(offline_results, providers, settings.url_cap), file=sys.stderr, flush=True)
     print(f"Triaging {len(samples)} samples with live lookups...", file=sys.stderr, flush=True)
     clock = clock or SystemClock()
@@ -367,15 +365,6 @@ def _not_checked_line(results: list[SampleResult]) -> str:
 def _table_line(row_name: str, cells: Sequence[str]) -> str:
     """One row of the counts table: its name left-aligned, then each cell right-aligned."""
     return f"{row_name:<6}" + "".join(f"{cell:>13}" for cell in cells)
-
-
-def _real_providers(settings: Settings) -> list[Provider]:
-    """Build the real Providers, reading API keys from .env (if present) and the environment.
-
-    Keys already set in the environment win over the .env file.
-    """
-    load_dotenv(Path(".env"))
-    return build_providers(os.environ, settings)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
