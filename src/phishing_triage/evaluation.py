@@ -32,12 +32,11 @@ from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     SAFETY_MARGIN,
     Clock,
-    LookupCache,
     Observable,
     Provider,
     Rule,
-    Settings,
     SystemClock,
+    TriageReport,
     UnparseableEmailError,
     Verdict,
     over_lookup_cap,
@@ -137,10 +136,15 @@ def main(
     # Live, this first pass only finds each sample's Observables for the
     # estimate (and gives the offline counts to compare with).
     if args.live:
-        print(f"Reading {len(samples)} samples to estimate the lookups (no lookups yet)...", file=sys.stderr, flush=True)
+        first_pass = f"Reading {len(samples)} samples to estimate the lookups (no lookups yet)..."
     else:
-        print(f"Triaging {len(samples)} samples offline...", file=sys.stderr, flush=True)
-    offline_results = [_evaluate_sample(label, path, settings, rules) for label, path in samples]
+        first_pass = f"Triaging {len(samples)} samples offline..."
+    print(first_pass, file=sys.stderr, flush=True)
+
+    def triage_offline(raw_email: bytes) -> TriageReport:
+        return triage(raw_email, settings, providers=[], rules=rules)
+
+    offline_results = [_evaluate_sample(label, path, triage_offline) for label, path in samples]
     if not args.live:
         print(f"Offline evaluation of {args.samples}: rules only, no Providers.")
         print("Verdicts are counted before the clean-requires-evidence cap.")
@@ -161,10 +165,14 @@ def main(
             )
     print(_lookup_estimate(offline_results, providers, settings.url_cap), file=sys.stderr, flush=True)
     print(f"Triaging {len(samples)} samples with live lookups...", file=sys.stderr, flush=True)
-    clock = clock or SystemClock()
+    live_clock = clock or SystemClock()
+    paced = [RunWidePacing(provider, live_clock, show_progress) for provider in providers]
     cache = JsonFileCache()  # The CLI's cache: answers it has are used, new ones kept.
-    live = _LiveLookups([RunWidePacing(provider, clock, show_progress) for provider in providers], clock, cache)
-    live_results = [_evaluate_sample(label, path, settings, rules, live) for label, path in samples]
+
+    def triage_live(raw_email: bytes) -> TriageReport:
+        return triage(raw_email, settings, paced, rules=rules, clock=live_clock, cache=cache)
+
+    live_results = [_evaluate_sample(label, path, triage_live) for label, path in samples]
     if cache.save_error:
         print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
 
@@ -205,23 +213,8 @@ def _print_results(results: list[SampleResult], show_list: bool, before_cap: boo
     print(_rate_line("Missed-phish rate (phish clean)", results, "phish", before_cap, lambda v: v == Verdict.CLEAN))
 
 
-@dataclass(frozen=True)
-class _LiveLookups:
-    """What a live run triages each sample with: the paced Providers, the clock they wait on, and the cache."""
-
-    providers: list[Provider]
-    clock: Clock
-    cache: LookupCache
-
-
-def _evaluate_sample(
-    label: str,
-    path: Path,
-    settings: Settings,
-    rules: Sequence[Rule],
-    live: _LiveLookups | None = None,
-) -> SampleResult:
-    """Triage one sample, offline (no `live`) or live, and keep both its Verdicts.
+def _evaluate_sample(label: str, path: Path, run_triage: Callable[[bytes], TriageReport]) -> SampleResult:
+    """Triage one sample with `run_triage` (offline or live), and keep both its Verdicts.
 
     Both the final Verdict and the one from before the cap are kept: offline,
     every URL and attachment is Not Checked, so the clean-requires-evidence
@@ -238,10 +231,7 @@ def _evaluate_sample(
     except OSError as error:
         return _failed(label, path, Failure.ERROR, f"could not be read: {error.strerror}")
     try:
-        if live is None:
-            report = triage(raw_email, settings, providers=[], rules=rules)
-        else:
-            report = triage(raw_email, settings, live.providers, rules=rules, clock=live.clock, cache=live.cache)
+        report = run_triage(raw_email)
     except UnparseableEmailError as error:
         return _failed(label, path, Failure.UNPARSEABLE, str(error))
     # Deliberately broad: real datasets hold emails odd enough to trip up the
