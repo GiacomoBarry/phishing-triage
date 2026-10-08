@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] A settings file holds Finding points and Verdict thresholds, with the spec's defaults; the CLI loads it and passes it to the core
 - [x] Score is the sum of non-decisive Finding points, capped at 100

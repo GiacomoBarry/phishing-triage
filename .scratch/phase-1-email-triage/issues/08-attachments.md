@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Each attachment is recorded with filename, declared type, size, and SHA-256, MD5 and SHA-1 of the whole file; the hashes are Observables
 - [x] Settings hold an editable list of risky extensions

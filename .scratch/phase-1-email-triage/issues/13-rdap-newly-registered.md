@@ -4,7 +4,7 @@
 
 **Blocked by:** 09
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] RDAP Provider returns a registration date, or "unknown age" when the registry hides or lacks it
 - [x] Settings hold the age limit (default 30 days); younger domains give the newly registered Finding (20 points) with evidence (domain, registration date, age)

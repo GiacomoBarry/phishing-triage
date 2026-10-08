@@ -4,7 +4,7 @@
 
 **Blocked by:** 10
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Each distinct Observable is looked up once per Provider per Triage
 - [x] Domains are looked up before individual URLs

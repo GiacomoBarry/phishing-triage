@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Settings hold an editable list of Protected Domains and brand names (defaults include Microsoft, Google, PayPal, Apple, Amazon, DHL, HMRC, Royal Mail)
 - [x] Display-name impersonation Finding (25 points) when the display name names a Protected brand and the sending domain isn't one of that brand's domains, with evidence naming both
