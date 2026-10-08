@@ -54,6 +54,14 @@ def build_providers(environ: Mapping[str, str], settings: Settings) -> list[Prov
     ]
 
 
+def missing_api_keys(environ: Mapping[str, str]) -> dict[str, str]:
+    """Each Provider with no API key in `environ`, and the variable its key goes in.
+
+    Only names are returned, never a key's value.
+    """
+    return {provider: variable for provider, variable in API_KEY_VARIABLES.items() if not _key(environ, provider)}
+
+
 def _key(environ: Mapping[str, str], provider: str) -> str | None:
     """The Provider's API key from `environ`, or None if it isn't set (or is blank)."""
     return environ.get(API_KEY_VARIABLES[provider], "").strip() or None

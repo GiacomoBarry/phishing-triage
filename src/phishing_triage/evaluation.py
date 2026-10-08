@@ -17,6 +17,7 @@ Like the CLI, this lives outside the core: it reads files and prints.
 """
 
 import argparse
+import os
 import random
 import sys
 from collections.abc import Callable, Sequence
@@ -43,7 +44,7 @@ from phishing_triage.core import (
     triage,
 )
 from phishing_triage.core.rules import BUILT_IN_RULES
-from phishing_triage.providers import real_providers
+from phishing_triage.providers import missing_api_keys, real_providers
 from phishing_triage.run_wide_pacing import RunWidePacing
 
 SAMPLES_DIR = Path("samples")  # Ignored by git: raw samples hold real people's addresses
@@ -150,7 +151,14 @@ def main(
     # Live, the offline pass has found each sample's Observables, so the
     # warning can say how many lookups there will be before any is made.
     if providers is None:
-        providers = real_providers(settings)
+        providers = real_providers(settings)  # Also reads .env into the environment
+        # A Provider with no key answers Not Checked, which would quietly make the
+        # run look worse. Only the names are printed, never a key.
+        for provider, variable in missing_api_keys(os.environ).items():
+            print(
+                f"Warning: {provider} has no API key ({variable}), so its lookups will be Not Checked.",
+                file=sys.stderr,
+            )
     print(_lookup_estimate(offline_results, providers, settings.url_cap), file=sys.stderr, flush=True)
     print(f"Triaging {len(samples)} samples with live lookups...", file=sys.stderr, flush=True)
     clock = clock or SystemClock()

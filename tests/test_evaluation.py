@@ -461,6 +461,29 @@ def test_live_mode_says_it_reads_the_samples_first_without_claiming_to_be_offlin
     assert "Triaging 8 samples with live lookups..." in err
 
 
+def test_live_mode_warns_which_providers_have_no_api_key_without_printing_any_key(
+    in_tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The real Providers are built (with no Providers passed in), but the
+    # samples folder is empty, so nothing is looked up. Only VirusTotal has a
+    # key here (a made-up one), and there is no .env in the empty folder.
+    for name in ("URLHAUS_AUTH_KEY", "ABUSEIPDB_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "made-up-test-key")
+    samples = in_tmp_path / "samples"
+    (samples / "phish").mkdir(parents=True)
+    (samples / "ham").mkdir()
+
+    exit_code = main([str(samples), "--live"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 0
+    assert "Warning: URLhaus has no API key (URLHAUS_AUTH_KEY), so its lookups will be Not Checked." in err
+    assert "Warning: AbuseIPDB has no API key (ABUSEIPDB_API_KEY), so its lookups will be Not Checked." in err
+    assert "VirusTotal has no API key" not in err
+    assert "made-up-test-key" not in err
+
+
 def test_the_lookup_estimate_leaves_out_urls_over_the_lookup_cap(
     tmp_path: Path, in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
