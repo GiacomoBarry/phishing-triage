@@ -10,6 +10,9 @@ reports/
 # Reputation Lookup cache
 .cache/
 
+# Temporary git worktrees that Claude Code's agents work in
+.claude/worktrees/
+
 # Python and tooling
 .venv/
 __pycache__/
