@@ -118,39 +118,50 @@ def main(
         for label in SAMPLE_LABELS
         for path in _pick(_samples(args.samples / label), sample_size, args.seed)
     ]
-    if args.live:
-        if providers is None:
-            providers = _real_providers(settings)
-        # A quick offline pass first finds each sample's Observables, to say
-        # how many lookups the live run will make before it makes any.
-        offline_results = [_evaluate_sample(label, path, settings, rules) for label, path in samples]
-        print(_lookup_estimate(offline_results, providers, settings.url_cap), file=sys.stderr, flush=True)
-        print(f"Triaging {len(samples)} samples with live lookups...", file=sys.stderr, flush=True)
-        clock = clock or SystemClock()
-        cache = JsonFileCache()  # The CLI's cache: answers it has are used, new ones kept.
-        live = _LiveLookups([RunWidePacing(provider, clock) for provider in providers], clock, cache)
-        results = [_evaluate_sample(label, path, settings, rules, live) for label, path in samples]
-        if cache.save_error:
-            print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
-        print(f"Live evaluation of {args.samples}: rules plus Reputation Lookups.")
-        print("Verdicts are the final ones, after the clean-requires-evidence cap.")
-    else:
-        # On stderr, so it never mixes with the results. A full run takes minutes.
-        print(f"Triaging {len(samples)} samples offline...", file=sys.stderr, flush=True)
-        results = [_evaluate_sample(label, path, settings, rules) for label, path in samples]
+    # On stderr, so it never mixes with the results. A full run takes minutes.
+    print(f"Triaging {len(samples)} samples offline...", file=sys.stderr, flush=True)
+    offline_results = [_evaluate_sample(label, path, settings, rules) for label, path in samples]
+    if not args.live:
         print(f"Offline evaluation of {args.samples}: rules only, no Providers.")
         print("Verdicts are counted before the clean-requires-evidence cap.")
+        print()
+        _print_results(offline_results, args.list)
+        return ExitCode.OK
+
+    # Live, the offline pass has found each sample's Observables, so the
+    # warning can say how many lookups there will be before any is made.
+    if providers is None:
+        providers = _real_providers(settings)
+    print(_lookup_estimate(offline_results, providers, settings.url_cap), file=sys.stderr, flush=True)
+    print(f"Triaging {len(samples)} samples with live lookups...", file=sys.stderr, flush=True)
+    clock = clock or SystemClock()
+    cache = JsonFileCache()  # The CLI's cache: answers it has are used, new ones kept.
+    live = _LiveLookups([RunWidePacing(provider, clock) for provider in providers], clock, cache)
+    live_results = [_evaluate_sample(label, path, settings, rules, live) for label, path in samples]
+    if cache.save_error:
+        print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
+
+    print(f"Live evaluation of {args.samples}: rules plus Reputation Lookups.")
+    print("Verdicts are the final ones, after the clean-requires-evidence cap.")
     print()
-    if args.list:
+    _print_results(live_results, args.list)
+    print(_not_checked_line(live_results))
+    print()
+    print("For comparison, offline on the same samples (rules only, Verdicts before the cap):")
+    print()
+    _print_results(offline_results, show_list=False)
+    return ExitCode.OK
+
+
+def _print_results(results: list[SampleResult], show_list: bool) -> None:
+    """The --list lines (if asked for), the counts table and the two rates."""
+    if show_list:
         print("\n".join(_listing_line(result) for result in results))
         print()
     print(_counts_table(results))
     print()
-    if args.live:
-        print(_not_checked_line(results))
     print(_rate_line("False-positive rate (ham not clean)", results, "ham", lambda v: v != Verdict.CLEAN))
     print(_rate_line("Missed-phish rate (phish clean)", results, "phish", lambda v: v == Verdict.CLEAN))
-    return ExitCode.OK
 
 
 @dataclass(frozen=True)

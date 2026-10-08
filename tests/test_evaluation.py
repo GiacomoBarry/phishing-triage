@@ -557,3 +557,17 @@ def test_a_cache_that_cannot_be_saved_does_not_stop_a_live_run(
     assert exit_code == 0
     assert row(captured.out, "phish") == ["phish", "0", "1", "3", "1", "0", "5"]
     assert "Warning: could not save the cache" in captured.err
+
+
+def test_live_mode_also_prints_the_offline_counts_for_the_same_samples(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # So the effect of the lookups can be read off one run: the live table,
+    # then what the rules alone gave the same emails.
+    main([str(SAMPLES), "--live"], providers=[ListsEveryURL()])
+
+    live, offline = capsys.readouterr().out.split("For comparison, offline on the same samples")
+    assert row(live, "phish") == ["phish", "0", "1", "3", "1", "0", "5"]
+    assert row(offline, "phish") == ["phish", "1", "1", "2", "1", "0", "5"]
+    assert "Missed-phish rate (phish clean): 0.0% (0 of 4 phish)" in live
+    assert "Missed-phish rate (phish clean): 25.0% (1 of 4 phish)" in offline
