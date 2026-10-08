@@ -22,6 +22,7 @@ from phishing_triage.core.lookups import (
     NotChecked,
     Progress,
     ProviderStopped,
+    ProviderTurns,
     WaitingForRateLimit,
     over_lookup_cap,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "Outcome",
     "Progress",
     "ProviderStopped",
+    "ProviderTurns",
     "Provider",
     "ReceivedHop",
     "RDAP",

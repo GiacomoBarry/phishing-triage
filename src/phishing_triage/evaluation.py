@@ -27,7 +27,7 @@ from pathlib import Path
 
 
 from phishing_triage.cache_file import JsonFileCache
-from phishing_triage.command_line import ArgumentParser, ExitCode, print_error
+from phishing_triage.command_line import ArgumentParser, ExitCode, print_error, show_progress
 from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     SAFETY_MARGIN,
@@ -163,7 +163,7 @@ def main(
     print(f"Triaging {len(samples)} samples with live lookups...", file=sys.stderr, flush=True)
     clock = clock or SystemClock()
     cache = JsonFileCache()  # The CLI's cache: answers it has are used, new ones kept.
-    live = _LiveLookups([RunWidePacing(provider, clock) for provider in providers], clock, cache)
+    live = _LiveLookups([RunWidePacing(provider, clock, show_progress) for provider in providers], clock, cache)
     live_results = [_evaluate_sample(label, path, settings, rules, live) for label, path in samples]
     if cache.save_error:
         print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)

@@ -13,14 +13,11 @@ from pathlib import Path
 
 
 from phishing_triage.cache_file import JsonFileCache, WriteOnlyCache
-from phishing_triage.command_line import ArgumentParser, ExitCode, print_error
+from phishing_triage.command_line import ArgumentParser, ExitCode, print_error, show_progress
 from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     LABELS,
-    LookupStarted,
     NoAttachedEmailError,
-    Progress,
-    ProviderStopped,
     Provider,
     TriageReport,
     UnparseableAttachedEmailError,
@@ -72,7 +69,7 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
             raw_email,
             settings,
             providers,
-            on_progress=_show_progress,
+            on_progress=show_progress,
             cache=WriteOnlyCache(cache) if args.no_cache else cache,
             inner=args.inner,
         )
@@ -104,20 +101,6 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
     print(f"Triage Report saved to {saved_path}", file=sys.stderr)
 
     return VERDICT_EXIT_CODES[report.verdict]
-
-
-def _show_progress(event: Progress) -> None:
-    """Show lookup progress on stderr, so it never mixes with --json output."""
-    if isinstance(event, LookupStarted):
-        observable = f"{LABELS[event.observable.kind]} {defanged(event.observable)}"
-        message = f"Looking up {event.number} of {event.total}: {event.provider}, {observable}"
-        if event.from_cache:
-            message += " (cached)"
-    elif isinstance(event, ProviderStopped):
-        message = f"Not asking {event.provider} again: {event.reason}"
-    else:
-        message = f"Waiting {event.seconds:.0f}s for {event.provider}'s rate limit..."
-    print(message, file=sys.stderr, flush=True)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:

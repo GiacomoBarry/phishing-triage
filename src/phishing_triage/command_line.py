@@ -1,13 +1,16 @@
 """What the two commands (`phishing-triage` and `phishing-triage-evaluate`) share.
 
 Keeping the exit codes in one place means the two commands can never give
-the same number different meanings.
+the same number different meanings. Progress messages are shared too, so a
+wait for a rate limit reads the same in both.
 """
 
 import argparse
 import sys
 from enum import IntEnum
 from typing import NoReturn
+
+from phishing_triage.core import LABELS, LookupStarted, Progress, ProviderStopped, defanged
 
 
 class ExitCode(IntEnum):
@@ -38,3 +41,17 @@ class ArgumentParser(argparse.ArgumentParser):
 
 def print_error(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
+
+
+def show_progress(event: Progress) -> None:
+    """Show lookup progress on stderr, so it never mixes with the results (or --json output)."""
+    if isinstance(event, LookupStarted):
+        observable = f"{LABELS[event.observable.kind]} {defanged(event.observable)}"
+        message = f"Looking up {event.number} of {event.total}: {event.provider}, {observable}"
+        if event.from_cache:
+            message += " (cached)"
+    elif isinstance(event, ProviderStopped):
+        message = f"Not asking {event.provider} again: {event.reason}"
+    else:
+        message = f"Waiting {event.seconds:.0f}s for {event.provider}'s rate limit..."
+    print(message, file=sys.stderr, flush=True)

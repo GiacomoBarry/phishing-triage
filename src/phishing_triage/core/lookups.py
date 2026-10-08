@@ -82,7 +82,7 @@ class WaitingForRateLimit:
 
 @dataclass(frozen=True)
 class ProviderStopped:
-    """Progress: a Provider can't answer, so it won't be asked again in this Triage."""
+    """Progress: a Provider can't answer, so it won't be asked again while its turns last (one Triage, in the core)."""
 
     provider: str
     reason: str
@@ -111,7 +111,7 @@ def run_lookups(
     over_cap = over_lookup_cap(observables, url_cap)
     # sorted() is stable, so within each kind the email's order is kept.
     in_order = sorted(observables, key=lambda o: LOOKUP_ORDER.index(o.kind))
-    turns = [_ProviderTurns(provider, clock) for provider in providers]
+    turns = [ProviderTurns(provider, clock) for provider in providers]
     store: LookupCache = cache or _NoCache()
     to_do = [(observable, turn) for observable in in_order for turn in turns if turn.handles(observable)]
     total = sum(1 for observable, _ in to_do if observable not in over_cap)
@@ -126,7 +126,8 @@ def run_lookups(
             key = cache_key(turn.provider.name, observable, decisive_engines)
 
             def ask() -> Lookup:
-                return turn.look_up(observable, number, total, on_progress)
+                started = LookupStarted(number, total, turn.provider.name, observable)
+                return turn.look_up(observable, on_progress, started)
 
             def announce_hit() -> None:
                 on_progress(LookupStarted(number, total, turn.provider.name, observable, from_cache=True))
@@ -182,12 +183,15 @@ def _look_up(provider: Provider, observable: Observable) -> Lookup:
         return Lookup(Outcome.NOT_CHECKED, reason, stop_asking=True)
 
 
-class _ProviderTurns:
-    """One Provider's turns during a Triage: its rate-limit pacing, and whether it said to stop.
+class ProviderTurns:
+    """One Provider's turns: its rate-limit pacing, and whether it said to stop.
 
     Lookups to it are kept at least 60 / lookups_per_minute seconds apart, by
     waiting. Once it says to stop asking, the rest are Not Checked for the
     same reason, without asking it or waiting for it.
+
+    The core keeps one for each Provider for one Triage. The live evaluation
+    keeps one for a whole run of Triages (ADR 0016).
     """
 
     def __init__(self, provider: Provider, clock: Clock) -> None:
@@ -202,16 +206,23 @@ class _ProviderTurns:
         return observable.kind in self.provider.handles
 
     def look_up(
-        self, observable: Observable, number: int, total: int, on_progress: Callable[[Progress], None]
+        self,
+        observable: Observable,
+        on_progress: Callable[[Progress], None],
+        started: LookupStarted | None = None,
     ) -> Lookup:
-        """Wait for this Provider's turn, if needed, then ask it about `observable`."""
+        """Wait for this Provider's turn, if needed, then ask it about `observable`.
+
+        `started`, if given, is reported once any wait is over, just before asking.
+        """
         if self._stopped_by is not None:
             return Lookup(Outcome.NOT_CHECKED, self._stopped_by.detail)
         wait = self._wait_needed()
         if wait > 0:
             on_progress(WaitingForRateLimit(self.provider.name, wait))
             self._clock.sleep(wait)
-        on_progress(LookupStarted(number, total, self.provider.name, observable))
+        if started is not None:
+            on_progress(started)
         self._last_asked = self._clock.now()
         lookup = _look_up(self.provider, observable)
         if lookup.stop_asking:

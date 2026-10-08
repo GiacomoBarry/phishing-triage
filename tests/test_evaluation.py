@@ -568,7 +568,7 @@ def test_a_provider_that_says_to_stop_asking_is_not_asked_again_for_the_rest_of_
 
     captured = capsys.readouterr()
     assert len(provider.asked_at) == 1
-    assert "Not asking FakeIntel again in this evaluation: rate limited" in captured.err
+    assert "Not asking FakeIntel again: rate limited" in captured.err
 
 
 def test_live_mode_uses_the_reputation_cache_so_a_rerun_asks_nothing_again(
