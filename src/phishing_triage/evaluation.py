@@ -64,10 +64,10 @@ def main(argv: Sequence[str] | None = None, rules: Sequence[Rule] = BUILT_IN_RUL
         _print_error(str(error))
         return ExitCode.INVALID_SETTINGS
 
-    results = []
-    for label in LABELS:
-        for path in _samples(args.samples / label):
-            results.append(_evaluate_sample(label, path, settings, rules))
+    samples = [(label, path) for label in LABELS for path in _samples(args.samples / label)]
+    # On stderr, so it never mixes with the results. A full run takes minutes.
+    print(f"Triaging {len(samples)} samples offline...", file=sys.stderr, flush=True)
+    results = [_evaluate_sample(label, path, settings, rules) for label, path in samples]
 
     print(f"Offline evaluation of {args.samples}: rules only, no Providers.")
     print("Verdicts are counted before the clean-requires-evidence cap.")

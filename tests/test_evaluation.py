@@ -214,6 +214,13 @@ def test_says_it_is_offline_and_counts_verdicts_before_the_cap(capsys: pytest.Ca
     assert "before the clean-requires-evidence cap" in output
 
 
+def test_says_how_many_samples_it_is_triaging_on_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    # A run over the real datasets takes minutes, so it says up front how big the job is.
+    main([str(SAMPLES)])
+
+    assert "Triaging 8 samples" in capsys.readouterr().err
+
+
 def test_evaluates_the_samples_folder_in_the_current_folder_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
