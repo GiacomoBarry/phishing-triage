@@ -5,6 +5,7 @@ modes, the saved Triage Report and error handling. Rule logic is tested at
 the core seam, not here.
 """
 
+import hashlib
 import json
 import socket
 from pathlib import Path
@@ -611,3 +612,78 @@ def test_without_an_abuseipdb_key_the_claimed_origin_is_not_checked(
     out = capsys.readouterr().out
     assert "AbuseIPDB: Claimed Origin IP 45.33.32.156 -> not checked (no API key)" in out
     assert exit_code == 0  # An unchecked Claimed Origin alone can't stop a clean Verdict.
+
+
+# --- Wrapper Emails and --inner (ticket 06) ---
+
+PHISH = "From: PayPal <service@paypa1.com>\nSubject: Your account is locked\n\nVerify: https://evil.example/x\n"
+
+
+def wrapper_email(tmp_path: Path, attached: str | None = PHISH) -> str:
+    """Save a user's report to the reporting mailbox, with `attached` attached as an email."""
+    lines = [
+        "From: Jo Bloggs <jo@example.org>",
+        "Subject: Fwd: is this real?",
+        "MIME-Version: 1.0",
+        'Content-Type: multipart/mixed; boundary="b"',
+        "",
+        "--b",
+        "Content-Type: text/plain",
+        "",
+        "Is this a phish?",
+    ]
+    if attached is not None:
+        lines += ["--b", "Content-Type: message/rfc822", "Content-Disposition: attachment", "", attached]
+    lines.append("--b--")
+    path = tmp_path / "report.eml"
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def test_a_wrapper_email_is_triaged_as_given_with_a_warning_suggesting_inner(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main([wrapper_email(tmp_path)], providers=[CountingProvider(MALICIOUS)])
+
+    out = capsys.readouterr().out
+    # The phish's link is inside the attachment, so it isn't looked up: its hash is Not Checked.
+    assert exit_code == 1
+    assert "Subject:  Fwd: is this real?" in out
+    assert "Warning:  This email has an email attached" in out
+    assert "Use --inner to triage the attached email instead." in out
+
+
+def test_inner_triages_the_attached_email_and_the_report_records_the_wrapper(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wrapper = wrapper_email(tmp_path)
+
+    exit_code = main([wrapper, "--inner", "--json"], providers=[CountingProvider(MALICIOUS)])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert exit_code == 2  # The attached phish's link is malicious.
+    assert printed["subject"] == "Your account is locked"
+    assert printed["taken_from_wrapper_sha256"] == hashlib.sha256(Path(wrapper).read_bytes()).hexdigest()
+    assert printed["source_sha256"] != printed["taken_from_wrapper_sha256"]
+    assert printed["warnings"] == [
+        "Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself."
+    ]
+
+
+def test_a_plain_email_reports_no_wrapper(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    main([CLEAN_EMAIL, "--json"])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["taken_from_wrapper_sha256"] == ""
+    assert printed["warnings"] == []
+
+
+def test_inner_with_no_attached_email_exits_8_with_a_clear_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main([wrapper_email(tmp_path, attached=None), "--inner"])
+
+    assert exit_code == 8
+    err = capsys.readouterr().err
+    assert "report.eml has no email attached, so --inner has nothing to triage." in err
+    assert saved_reports(tmp_path) == []

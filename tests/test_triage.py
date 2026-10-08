@@ -1,6 +1,7 @@
 """Tests at Seam 1: the core entry point, `triage()`."""
 
 import builtins
+import hashlib
 import io
 import os
 import socket
@@ -30,6 +31,7 @@ from phishing_triage.core import (
     Finding,
     Lookup,
     LookupStarted,
+    NoAttachedEmailError,
     NotChecked,
     Observable,
     ObservableKind,
@@ -875,7 +877,7 @@ def test_an_attached_email_is_hashed_whole_but_not_opened() -> None:
 
     assert [a.content_type for a in report.attachments] == ["message/rfc822"]
     assert report.attachments[0].size > 0
-    # Nothing from inside the attached email is used (ticket 06 decides that).
+    # Nothing from inside the attached email is used, unless inner=True asks for it.
     assert [o.kind for o in report.observables] == [ObservableKind.SENDER_DOMAIN, ObservableKind.SHA256]
     assert report.findings == []
 
@@ -2352,3 +2354,144 @@ def test_incident_note_lists_iocs_apart_from_the_other_observables() -> None:
         "- Domain: evil[.]example\n"
         "\n"
     ) in note
+
+
+# --- Wrapper Emails and inner selection (ticket 06) ---
+
+
+def a_phish(subject: str = "Your account is locked", link: str = "https://paypa1-login.example/verify") -> EmailMessage:
+    """A small phish, as it might arrive attached to a user's report."""
+    phish = EmailMessage()
+    phish["From"] = "PayPal <service@paypa1.com>"
+    phish["Subject"] = subject
+    phish.set_content(f"Verify your account: {link}")
+    return phish
+
+
+def a_wrapper_email(*attached: EmailMessage) -> EmailMessage:
+    """A user's report to the reporting mailbox, with the given emails attached."""
+    wrapper = EmailMessage()
+    wrapper["From"] = "Jo Bloggs <jo@example.org>"
+    wrapper["Subject"] = "Fwd: is this real?"
+    wrapper.set_content("I got this, is it a phish? See attached.")
+    for message in attached:
+        wrapper.add_attachment(message)
+    return wrapper
+
+
+WRAPPER_WARNING = (
+    "This email has an email attached, so it may be a user's report (a Wrapper Email)"
+    " rather than the suspected phish itself. Use --inner to triage the attached email instead."
+)
+
+
+def test_a_plain_email_has_no_wrapper_warning() -> None:
+    report = triage(a_phish().as_bytes(), DEFAULT_SETTINGS, providers=[])
+
+    assert report.warnings == []
+    assert report.taken_from_wrapper_sha256 == ""
+
+
+def test_a_wrapper_email_warns_that_it_may_be_the_wrong_email() -> None:
+    report = triage(a_wrapper_email(a_phish()).as_bytes(), DEFAULT_SETTINGS, providers=[])
+
+    assert report.warnings == [WRAPPER_WARNING]
+    # Without --inner, the Wrapper Email itself is what was triaged.
+    assert report.subject == "Fwd: is this real?"
+    assert report.taken_from_wrapper_sha256 == ""
+
+
+def test_an_email_attached_as_an_eml_file_also_makes_a_wrapper_email() -> None:
+    raw = email_with_attachments(("phish.eml", a_phish().as_bytes(), "application/octet-stream"))
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert report.warnings == [WRAPPER_WARNING]
+
+
+def test_ordinary_attachments_do_not_make_a_wrapper_email() -> None:
+    raw = email_with_attachments(("notes.txt", b"From: someone\n", "text/plain"))
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[])
+
+    assert report.warnings == []
+
+
+def test_inner_triages_the_attached_email_and_records_the_wrapper() -> None:
+    wrapper = a_wrapper_email(a_phish()).as_bytes()
+    as_attachment = triage(wrapper, DEFAULT_SETTINGS, providers=[]).attachments[0]
+
+    report = triage(wrapper, DEFAULT_SETTINGS, providers=[], inner=True)
+
+    assert report.from_address == "service@paypa1.com"
+    assert report.subject == "Your account is locked"
+    assert "hxxps://paypa1-login[.]example/verify" in incident_note(report)
+    # The source is the attached email: the same bytes the Wrapper Email's attachment hash covers.
+    assert report.source_sha256 == as_attachment.sha256
+    assert report.taken_from_wrapper_sha256 == hashlib.sha256(wrapper).hexdigest()
+    assert report.warnings == ["Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself."]
+
+
+def test_inner_works_on_an_email_attached_as_an_eml_file() -> None:
+    raw = email_with_attachments(("phish.eml", a_phish().as_bytes(), "application/octet-stream"))
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[], inner=True)
+
+    assert report.subject == "Your account is locked"
+    assert report.source_sha256 == hashlib.sha256(a_phish().as_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param(a_phish().as_bytes(), id="no attachments"),
+        pytest.param(email_with_attachments(("invoice.pdf", b"%PDF", "application/pdf")), id="other attachments"),
+    ],
+)
+def test_inner_with_no_attached_email_is_refused(raw: bytes) -> None:
+    with pytest.raises(NoAttachedEmailError, match="no email attached"):
+        triage(raw, DEFAULT_SETTINGS, providers=[], inner=True)
+
+
+def test_several_attached_emails_are_counted_in_the_warning() -> None:
+    wrapper = a_wrapper_email(a_phish("First"), a_phish("Second"), a_phish("Third"))
+
+    report = triage(wrapper.as_bytes(), DEFAULT_SETTINGS, providers=[])
+
+    assert report.warnings == [
+        "This email has 3 emails attached, so it may be a user's report (a Wrapper Email)"
+        " rather than the suspected phish itself. Use --inner to triage the first attached email instead."
+    ]
+
+
+def test_inner_picks_the_first_of_several_attached_emails_and_says_so() -> None:
+    wrapper = a_wrapper_email(a_phish("First"), a_phish("Second"))
+
+    report = triage(wrapper.as_bytes(), DEFAULT_SETTINGS, providers=[], inner=True)
+
+    assert report.subject == "First"
+    assert report.warnings == [
+        "Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself.",
+        "The Wrapper Email has 2 emails attached. Only the first was triaged;"
+        " extract the others by hand to triage them.",
+    ]
+
+
+def test_inner_says_when_the_attached_email_has_an_email_attached_too() -> None:
+    forwarded_twice = a_wrapper_email(a_wrapper_email(a_phish()))
+
+    report = triage(forwarded_twice.as_bytes(), DEFAULT_SETTINGS, providers=[], inner=True)
+
+    assert report.subject == "Fwd: is this real?"
+    assert report.warnings == [
+        "Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself.",
+        "The triaged email has an email attached too. --inner only looks one level deep,"
+        " so extract that one by hand to triage it.",
+    ]
+
+
+def test_inner_refuses_an_attached_eml_file_that_is_not_an_email() -> None:
+    raw = email_with_attachments(("phish.eml", b"\x00\x01 not an email", "application/octet-stream"))
+
+    with pytest.raises(UnparseableEmailError):
+        triage(raw, DEFAULT_SETTINGS, providers=[], inner=True)

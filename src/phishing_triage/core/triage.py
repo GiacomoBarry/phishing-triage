@@ -13,7 +13,7 @@ from phishing_triage.core.attachments import extract_attachments
 from phishing_triage.core.authentication import read_authentication_results
 from phishing_triage.core.cache import LookupCache
 from phishing_triage.core.clock import Clock, SystemClock
-from phishing_triage.core.errors import UnparseableEmailError
+from phishing_triage.core.errors import NoAttachedEmailError, UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookups import Progress, find_not_checked, run_lookups
 from phishing_triage.core.observables import extract_observables
@@ -23,6 +23,7 @@ from phishing_triage.core.report import TriageReport
 from phishing_triage.core.rules import BUILT_IN_RULES
 from phishing_triage.core.settings import Settings
 from phishing_triage.core.verdict import cap_for_missing_evidence, score_and_verdict
+from phishing_triage.core.wrapper import find_attached_emails
 
 TOOL_VERSION = version("phishing-triage")
 
@@ -43,6 +44,7 @@ def triage(
     clock: Clock | None = None,
     on_progress: Callable[[Progress], None] | None = None,
     cache: LookupCache | None = None,
+    inner: bool = False,
 ) -> TriageReport:
     """Run one Triage on the raw bytes of an email and return its Triage Report.
 
@@ -50,13 +52,14 @@ def triage(
     clock, used to wait out Providers' rate limits. Tests can pass their own.
     `on_progress`, if given, is called as lookups start and while waiting, so
     the caller can show progress; the core itself never prints. `cache`, if
-    given, supplies fresh earlier answers and keeps new ones.
-    Raises UnparseableEmailError if the bytes are not an email at all.
+    given, supplies fresh earlier answers and keeps new ones. `inner` triages
+    the email attached inside a Wrapper Email instead of the email itself.
+    Raises UnparseableEmailError if the bytes are not an email at all, and
+    NoAttachedEmailError if `inner` is set but no email is attached.
     """
     clock = clock or SystemClock()
     now = datetime.fromtimestamp(clock.now(), UTC)
-    message = _parse(raw_email)
-    warnings: list[str] = []
+    raw_email, message, taken_from_wrapper_sha256, warnings = _choose_email(raw_email, inner)
 
     from_address, display_name = _sender(message)
     if not from_address:
@@ -99,6 +102,7 @@ def triage(
         analysed_at=now,
         tool_version=TOOL_VERSION,
         source_sha256=hashlib.sha256(raw_email).hexdigest(),
+        taken_from_wrapper_sha256=taken_from_wrapper_sha256,
         from_address=from_address,
         display_name=display_name,
         subject=str(message.get("Subject", "")),
@@ -116,6 +120,44 @@ def triage(
         cap_reason=cap_reason,
         warnings=warnings,
     )
+
+
+def _choose_email(raw_email: bytes, inner: bool) -> tuple[bytes, EmailMessage, str, list[str]]:
+    """Pick the email to triage: the one given, or (with `inner`) the email attached inside it.
+
+    Returns the chosen email's bytes and parsed message, the SHA-256 of the
+    Wrapper Email it was taken from ("" if none) and any warnings about the choice.
+    """
+    message = _parse(raw_email)
+    attached_emails = find_attached_emails(message)
+    count = len(attached_emails)
+    if not inner:
+        if count == 0:
+            return raw_email, message, "", []
+        has_attached = "an email attached" if count == 1 else f"{count} emails attached"
+        which = "the attached email" if count == 1 else "the first attached email"
+        return raw_email, message, "", [
+            f"This email has {has_attached}, so it may be a user's report (a Wrapper Email)"
+            f" rather than the suspected phish itself. Use --inner to triage {which} instead."
+        ]
+
+    if count == 0:
+        raise NoAttachedEmailError("There is no email attached to triage instead.")
+    wrapper_sha256 = hashlib.sha256(raw_email).hexdigest()
+    chosen = attached_emails[0]
+    warnings = ["Triaged the email attached inside a Wrapper Email, not the Wrapper Email itself."]
+    if count > 1:
+        warnings.append(
+            f"The Wrapper Email has {count} emails attached. Only the first was triaged;"
+            " extract the others by hand to triage them."
+        )
+    chosen_message = _parse(chosen.raw)
+    if find_attached_emails(chosen_message):
+        warnings.append(
+            "The triaged email has an email attached too. --inner only looks one level deep,"
+            " so extract that one by hand to triage it."
+        )
+    return chosen.raw, chosen_message, wrapper_sha256, warnings
 
 
 def _parse(raw_email: bytes) -> EmailMessage:

@@ -69,7 +69,7 @@ class Attachment:
 
 def extract_attachments(message: EmailMessage) -> list[Attachment]:
     """Describe every attachment in the email, in the order they appear."""
-    return [_describe(part) for part in _attachment_parts(message, is_top=True)]
+    return [_describe(part) for part in attachment_parts(message)]
 
 
 def extension_of(filename: str) -> str:
@@ -108,7 +108,7 @@ def display_filename(filename: str) -> str:
     )
 
 
-def _attachment_parts(part: EmailMessage, is_top: bool) -> Iterator[EmailMessage]:
+def attachment_parts(part: EmailMessage, is_top: bool = True) -> Iterator[EmailMessage]:
     """Yield each attachment part without looking inside attached emails.
 
     A part counts if it is marked as an attachment, has a filename (so an
@@ -121,11 +121,11 @@ def _attachment_parts(part: EmailMessage, is_top: bool) -> Iterator[EmailMessage
     if part.is_multipart():
         for sub_part in part.iter_parts():
             assert isinstance(sub_part, EmailMessage)  # guaranteed by policy.default
-            yield from _attachment_parts(sub_part, is_top=False)
+            yield from attachment_parts(sub_part, is_top=False)
 
 
 def _describe(part: EmailMessage) -> Attachment:
-    content = _content_of(part)
+    content = content_of(part)
     filename = part.get_filename() or ""
     archive_type = _archive_type(content, filename, part.get_content_type())
     return Attachment(
@@ -141,7 +141,7 @@ def _describe(part: EmailMessage) -> Attachment:
     )
 
 
-def _content_of(part: EmailMessage) -> bytes:
+def content_of(part: EmailMessage) -> bytes:
     """Return the attachment's bytes, decoded from the email's transfer encoding."""
     if part.get_content_type() == "message/rfc822":
         attached_email = part.get_payload(0)

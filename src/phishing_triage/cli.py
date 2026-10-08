@@ -21,6 +21,7 @@ from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     LABELS,
     LookupStarted,
+    NoAttachedEmailError,
     Progress,
     ProviderStopped,
     Provider,
@@ -50,6 +51,7 @@ class ExitCode(IntEnum):
     USAGE_ERROR = 5
     REPORT_NOT_SAVED = 6
     INVALID_SETTINGS = 7
+    NO_ATTACHED_EMAIL = 8
 
 
 VERDICT_EXIT_CODES = {
@@ -98,12 +100,16 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
             providers,
             on_progress=_show_progress,
             cache=WriteOnlyCache(cache) if args.no_cache else cache,
+            inner=args.inner,
         )
         if cache.save_error:
             print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
     except UnparseableEmailError as error:
         _print_error(f"{email_path} is not a parseable email. {error}")
         return ExitCode.UNPARSEABLE_EMAIL
+    except NoAttachedEmailError:
+        _print_error(f"{email_path} has no email attached, so --inner has nothing to triage.")
+        return ExitCode.NO_ATTACHED_EMAIL
 
     # Print before saving, so the analyst still sees the Verdict if saving fails.
     report_json = json.dumps(report.to_dict(), indent=2)
@@ -156,6 +162,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--json",
         action="store_true",
         help="print the Triage Report as JSON instead of the readable view",
+    )
+    parser.add_argument(
+        "--inner",
+        action="store_true",
+        help="triage the email attached inside a Wrapper Email (a user's report) instead of the report itself",
     )
     parser.add_argument(
         "--no-cache",

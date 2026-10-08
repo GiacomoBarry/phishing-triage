@@ -37,7 +37,9 @@ class TriageReport:
     report_id: str
     analysed_at: datetime
     tool_version: str
-    source_sha256: str
+    source_sha256: str  # Of the email that was triaged (the attached one, with --inner).
+    # The SHA-256 of the Wrapper Email the triaged email was taken from, or "" if it wasn't.
+    taken_from_wrapper_sha256: str
 
     # What the email claims about itself.
     from_address: str
