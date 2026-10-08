@@ -68,30 +68,39 @@ COLUMNS: list[Verdict | Failure] = [*Verdict, *Failure]
 
 
 @dataclass(frozen=True)
+class Triaged:
+    """What the core made of one sample."""
+
+    verdict: Verdict  # The final Verdict, after the clean-requires-evidence cap
+    verdict_before_cap: Verdict  # What the rules and Score alone decided
+    score: int
+    rule_ids: str  # The rule IDs of the Findings, comma-separated
+    not_checked: int  # How many of its Observables no Provider answered for
+    # What was pulled out of the email, in email order, to estimate the lookups a live run makes.
+    observables: tuple[Observable, ...]
+
+
+@dataclass(frozen=True)
+class Failed:
+    """Why one sample got no Verdict."""
+
+    failure: Failure
+    reason: str
+
+
+@dataclass(frozen=True)
 class SampleResult:
-    """What one sample got: a Verdict, or a Failure. Exactly one of the two is set."""
+    """One sample and what it got: either Triaged, or Failed."""
 
     label: str  # "phish" or "ham"
     path: Path
-    # The Verdict (before the cap offline, final live), or None if the sample failed.
-    verdict: Verdict | None
-    failure: Failure | None  # Why there is no Verdict, or None if there is one
-    score: int | None  # None if the sample failed
-    # The rule IDs of the Findings, or why the sample failed.
-    detail: str
-    # How many of its Observables were Not Checked. Only meaningful live:
-    # offline, nothing is checked.
-    not_checked: int = 0
-    # What was pulled out of the email, in email order, to estimate the lookups a live run makes.
-    observables: tuple[Observable, ...] = ()
+    outcome: Triaged | Failed
 
-    @property
-    def outcome(self) -> Verdict | Failure:
-        """The counts table's column for this sample."""
-        if self.verdict is not None:
-            return self.verdict
-        assert self.failure is not None, "a SampleResult has a Verdict or a Failure"
-        return self.failure
+    def column(self, before_cap: bool) -> Verdict | Failure:
+        """The counts table's column for this sample: its Verdict (from before the cap, or final), or its Failure."""
+        if isinstance(self.outcome, Failed):
+            return self.outcome.failure
+        return self.outcome.verdict_before_cap if before_cap else self.outcome.verdict
 
 
 def main(
@@ -132,7 +141,7 @@ def main(
         print(f"Offline evaluation of {args.samples}: rules only, no Providers.")
         print("Verdicts are counted before the clean-requires-evidence cap.")
         print()
-        _print_results(offline_results, args.list)
+        _print_results(offline_results, args.list, before_cap=True)
         return ExitCode.OK
 
     # Live, the offline pass has found each sample's Observables, so the
@@ -149,26 +158,40 @@ def main(
         print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
 
     print(f"Live evaluation of {args.samples}: rules plus Reputation Lookups.")
-    print("Verdicts are the final ones, after the clean-requires-evidence cap.")
+    print("Verdicts are the final ones, after the clean-requires-evidence cap, as an analyst sees them.")
     print()
-    _print_results(live_results, args.list)
+    _print_results(live_results, args.list, before_cap=False)
     print(_not_checked_line(live_results))
     print()
-    print("For comparison, offline on the same samples (rules only, Verdicts before the cap):")
+    # Offline, every link and attachment is Not Checked, so the offline counts
+    # are from before the cap. Comparing them with the final live counts would
+    # blame the lookups for what the cap did, so the live counts from before
+    # the cap are shown alongside them.
+    print("To compare like-for-like with the rules alone, the Verdicts before the cap:")
     print()
-    _print_results(offline_results, show_list=False)
+    print("Live, before the cap (rules plus Reputation Lookups):")
+    print()
+    _print_results(live_results, show_list=False, before_cap=True)
+    print()
+    print("Offline, before the cap (rules only, no Providers):")
+    print()
+    _print_results(offline_results, show_list=False, before_cap=True)
     return ExitCode.OK
 
 
-def _print_results(results: list[SampleResult], show_list: bool) -> None:
-    """The --list lines (if asked for), the counts table and the two rates."""
+def _print_results(results: list[SampleResult], show_list: bool, before_cap: bool) -> None:
+    """The --list lines (if asked for), the counts table and the two rates.
+
+    `before_cap` says which Verdict to count: the one from before the
+    clean-requires-evidence cap, or the final one.
+    """
     if show_list:
-        print("\n".join(_listing_line(result) for result in results))
+        print("\n".join(_listing_line(result, before_cap) for result in results))
         print()
-    print(_counts_table(results))
+    print(_counts_table(results, before_cap))
     print()
-    print(_rate_line("False-positive rate (ham not clean)", results, "ham", lambda v: v != Verdict.CLEAN))
-    print(_rate_line("Missed-phish rate (phish clean)", results, "phish", lambda v: v == Verdict.CLEAN))
+    print(_rate_line("False-positive rate (ham not clean)", results, "ham", before_cap, lambda v: v != Verdict.CLEAN))
+    print(_rate_line("Missed-phish rate (phish clean)", results, "phish", before_cap, lambda v: v == Verdict.CLEAN))
 
 
 @dataclass(frozen=True)
@@ -187,12 +210,12 @@ def _evaluate_sample(
     rules: Sequence[Rule],
     live: _LiveLookups | None = None,
 ) -> SampleResult:
-    """Triage one sample, offline (no `live`) or live, and keep its Verdict.
+    """Triage one sample, offline (no `live`) or live, and keep both its Verdicts.
 
-    Offline, every URL and attachment is Not Checked, so the
-    clean-requires-evidence cap would raise every clean Verdict to
-    suspicious. So the Verdict kept is the one from before the cap: what the
-    rules alone decided. Live, it is the final Verdict, as an analyst would see it.
+    Both the final Verdict and the one from before the cap are kept: offline,
+    every URL and attachment is Not Checked, so the clean-requires-evidence
+    cap would raise every clean Verdict to suspicious, and only the Verdict
+    from before the cap says what the rules decided.
 
     A sample that can't be triaged is counted as unparseable (not an email) or
     as an error (unreadable, or the core failed on it), with the reason, so one
@@ -214,22 +237,29 @@ def _evaluate_sample(
     # parser or a rule. The listing shows the failure so the bug can be fixed.
     except Exception as error:
         return _failed(label, path, Failure.ERROR, f"the core failed ({type(error).__name__}: {error})")
-    rule_ids = ", ".join(finding.rule_id for finding in report.findings)
-    verdict = report.verdict_before_cap if live is None else report.verdict
-    return SampleResult(
-        label, path, verdict, None, report.score, rule_ids, len(report.not_checked), tuple(report.observables)
+    triaged = Triaged(
+        verdict=report.verdict,
+        verdict_before_cap=report.verdict_before_cap,
+        score=report.score,
+        rule_ids=", ".join(finding.rule_id for finding in report.findings),
+        not_checked=len(report.not_checked),
+        observables=tuple(report.observables),
     )
+    return SampleResult(label, path, triaged)
 
 
 def _failed(label: str, path: Path, failure: Failure, reason: str) -> SampleResult:
-    return SampleResult(label, path, verdict=None, failure=failure, score=None, detail=reason)
+    return SampleResult(label, path, Failed(failure, reason))
 
 
-def _listing_line(result: SampleResult) -> str:
+def _listing_line(result: SampleResult, before_cap: bool) -> str:
     """One sample's label, Verdict, Score, path and Findings (or why it failed)."""
-    score = "-" if result.score is None else str(result.score)
-    line = f"{result.label:<6}{result.outcome:<12}{score:>4}  {result.path}"
-    return f"{line}  ({result.detail})" if result.detail else line
+    if isinstance(result.outcome, Failed):
+        score, detail = "-", result.outcome.reason
+    else:
+        score, detail = str(result.outcome.score), result.outcome.rule_ids
+    line = f"{result.label:<6}{result.column(before_cap):<12}{score:>4}  {result.path}"
+    return f"{line}  ({detail})" if detail else line
 
 
 def _samples(folder: Path) -> list[Path]:
@@ -253,8 +283,11 @@ def _lookup_estimate(results: list[SampleResult], providers: Sequence[Provider],
     """
     counts = {provider.name: 0 for provider in providers}
     for result in results:
-        urls = [o for o in result.observables if o.kind is ObservableKind.URL]
-        to_look_up = [o for o in result.observables if o.kind is not ObservableKind.URL] + urls[:url_cap]
+        if isinstance(result.outcome, Failed):
+            continue
+        observables = result.outcome.observables
+        urls = [o for o in observables if o.kind is ObservableKind.URL]
+        to_look_up = [o for o in observables if o.kind is not ObservableKind.URL] + urls[:url_cap]
         for provider in providers:
             counts[provider.name] += sum(1 for o in to_look_up if o.kind in provider.handles)
     lines = [f"Up to {sum(counts.values())} Reputation Lookups (fewer if answers are cached):"]
@@ -287,24 +320,29 @@ def _pick(paths: list[Path], size: int | None, seed: int) -> list[Path]:
     return sorted(random.Random(seed).sample(paths, size))
 
 
-def _counts_table(results: list[SampleResult]) -> str:
+def _counts_table(results: list[SampleResult], before_cap: bool) -> str:
     """How many samples of each label got each outcome."""
     lines = [_table_line("Label", [*COLUMNS, "total"])]
     for label in SAMPLE_LABELS:
-        outcomes = [r.outcome for r in results if r.label == label]
+        outcomes = [r.column(before_cap) for r in results if r.label == label]
         counts = [str(outcomes.count(column)) for column in COLUMNS]
         lines.append(_table_line(label, [*counts, str(len(outcomes))]))
     return "\n".join(lines)
 
 
 def _rate_line(
-    name: str, results: list[SampleResult], label: str, is_mistake: Callable[[Verdict], bool]
+    name: str,
+    results: list[SampleResult],
+    label: str,
+    before_cap: bool,
+    is_mistake: Callable[[Verdict], bool],
 ) -> str:
     """One rate: the share of a label's triaged samples that got the wrong sort of Verdict.
 
     Unparseable and error samples have no Verdict, so they count towards neither side.
     """
-    verdicts = [r.verdict for r in results if r.label == label and r.verdict is not None]
+    columns = [r.column(before_cap) for r in results if r.label == label]
+    verdicts = [column for column in columns if isinstance(column, Verdict)]
     mistakes = sum(1 for verdict in verdicts if is_mistake(verdict))
     if not verdicts:
         return f"{name}: no {label} samples were triaged"
@@ -313,7 +351,10 @@ def _rate_line(
 
 def _not_checked_line(results: list[SampleResult]) -> str:
     """How many Observables no Provider answered for, in all and for each label."""
-    per_label = {label: sum(r.not_checked for r in results if r.label == label) for label in SAMPLE_LABELS}
+    per_label = {
+        label: sum(r.outcome.not_checked for r in results if r.label == label and isinstance(r.outcome, Triaged))
+        for label in SAMPLE_LABELS
+    }
     in_each = ", ".join(f"{count} in {label}" for label, count in per_label.items())
     return f"Observables Not Checked: {sum(per_label.values())} ({in_each})"
 

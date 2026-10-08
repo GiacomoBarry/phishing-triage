@@ -561,15 +561,38 @@ def test_a_cache_that_cannot_be_saved_does_not_stop_a_live_run(
     assert "Warning: could not save the cache" in captured.err
 
 
-def test_live_mode_also_prints_the_offline_counts_for_the_same_samples(
+def live_tables(output: str) -> tuple[str, str, str]:
+    """A live run's output cut into its three tables: final, live before the cap, offline before the cap."""
+    final, before_cap = output.split("Live, before the cap")
+    live_before_cap, offline_before_cap = before_cap.split("Offline, before the cap")
+    return final, live_before_cap, offline_before_cap
+
+
+def test_live_mode_compares_with_the_offline_counts_before_the_cap_like_for_like(
     in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # So the effect of the lookups can be read off one run: the live table,
-    # then what the rules alone gave the same emails.
+    # So the effect of the lookups can be read off one run. The offline counts
+    # are from before the cap (offline, the cap would raise every clean email),
+    # so they are compared with the live counts from before the cap too.
     main([str(SAMPLES), "--live"], providers=[ListsEveryURL()])
 
-    live, offline = capsys.readouterr().out.split("For comparison, offline on the same samples")
+    final, live, offline = live_tables(capsys.readouterr().out)
+    assert row(final, "phish") == ["phish", "0", "1", "3", "1", "0", "5"]
     assert row(live, "phish") == ["phish", "0", "1", "3", "1", "0", "5"]
     assert row(offline, "phish") == ["phish", "1", "1", "2", "1", "0", "5"]
     assert "Missed-phish rate (phish clean): 0.0% (0 of 4 phish)" in live
     assert "Missed-phish rate (phish clean): 25.0% (1 of 4 phish)" in offline
+
+
+def test_a_ham_raised_only_by_the_cap_does_not_look_made_worse_by_the_lookups(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Nobody looks meeting_link's URL up, so the cap makes it suspicious in the
+    # final count. Before the cap the lookups changed nothing, and the
+    # like-for-like tables say so: they match.
+    main([str(SAMPLES), "--live"], providers=[KnowsNothingButURLs()])
+
+    final, live, offline = live_tables(capsys.readouterr().out)
+    assert row(final, "ham") == ["ham", "1", "2", "0", "0", "0", "3"]
+    assert row(live, "ham") == ["ham", "2", "1", "0", "0", "0", "3"]
+    assert row(offline, "ham") == row(live, "ham")
