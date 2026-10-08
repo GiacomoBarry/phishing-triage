@@ -64,13 +64,13 @@ Every run saves the Triage Report to `reports/<report-id>.json`. That folder is 
 
 ### Wrapper Emails and `--inner`
 
-Users often report a phish by forwarding it "as an attachment", so the `.eml` you save is their report (a **Wrapper Email**) with the real phish inside. Triaging that by mistake would judge your colleague's email, not the phish. When the email has an email attached (declared as `message/rfc822`, or a file ending in `.eml`), the readable view and the Triage Report warn you and suggest `--inner`:
+Users often report a phish by forwarding it "as an attachment", so the `.eml` you save is a **Wrapper Email**: their own email, with the real phish inside. Triaging that by mistake would judge your colleague's email, not the phish. When the email has an email attached (declared as `message/rfc822`, or a file ending in `.eml`), the Triage Report warns you that it may be a Wrapper Email, and the readable view adds a hint to use `--inner`:
 
 ```sh
-uv run phishing-triage path/to/report.eml --inner   # triage the email attached inside the report
+uv run phishing-triage path/to/wrapper.eml --inner   # triage the email attached inside the Wrapper Email
 ```
 
-With `--inner`, the attached email is triaged instead. The Triage Report's `source_sha256` is the attached email's (the same as its attachment hash in the report), `taken_from_wrapper_sha256` records the Wrapper Email it came from, and a warning says it was taken from inside one. If several emails are attached, the first is triaged and the warnings say how many there were. `--inner` only looks one level deep ([ADR 0014](docs/adr/0014-attached-emails-are-message-rfc822-or-eml-files-one-level-deep.md)). If nothing is attached, it stops with exit code 8.
+With `--inner`, the attached email is triaged instead. The Triage Report's `source_sha256` is the attached email's, worked out from its bytes exactly as they sit inside the Wrapper Email (only a transfer encoding such as base64 is undone). So it matches its attachment hash in the Wrapper Email's Triage Report, and the hash of the same phish saved straight to disk as a `.eml` file. `taken_from_wrapper_sha256` records the Wrapper Email it came from, and a warning says it was taken from inside one. If several emails are attached, the first is triaged and the warnings say how many there were. `--inner` only looks one level deep ([ADR 0014](docs/adr/0014-attached-emails-are-message-rfc822-or-eml-files-one-level-deep.md)). If nothing is attached, it stops with exit code 8. If the attached email turns out not to be an email at all, it stops with exit code 4 and says it is the attached email that can't be read.
 
 In the readable view and the Incident Note, every URL and domain is **defanged** (`hxxps://evil[.]com/login`) so nobody can click it by accident. The `--json` output keeps the real values, because it is meant for other programs.
 
