@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from phishing_triage.core import Finding, RuleInput, Settings
+from phishing_triage.core import Finding, Lookup, Observable, ObservableKind, Outcome, RuleInput, Settings
 from phishing_triage.evaluation import main
 
 SAMPLES = Path(__file__).parent / "fixtures" / "evaluation"
@@ -251,3 +251,77 @@ def test_evaluates_the_samples_folder_in_the_current_folder_by_default(
 
     assert exit_code == 0
     assert row(capsys.readouterr().out, "phish") == ["phish", "0", "1", "0", "0", "0", "1"]
+
+
+# Live evaluation: the same command with --live asks Providers. These tests
+# pass fake Providers only, and the network stays blocked (see no_network).
+
+
+class ListsEveryURL:
+    """A fake Provider that reports every URL as malicious."""
+
+    name = "FakeIntel"
+    handles = frozenset({ObservableKind.URL})
+    lookups_per_minute = None
+
+    def __init__(self) -> None:
+        self.asked: list[Observable] = []
+
+    def lookup(self, observable: Observable) -> Lookup:
+        self.asked.append(observable)
+        return Lookup(Outcome.MALICIOUS, "listed for testing")
+
+
+@pytest.fixture
+def in_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Work in an empty folder, so the live evaluation's cache file lands somewhere disposable."""
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_live_mode_asks_the_providers_so_lookups_change_the_verdicts(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Offline, invoice_link is a missed phish and meeting_link is clean. A
+    # Provider listing their URLs makes both malicious.
+    exit_code = main([str(SAMPLES), "--live"], providers=[ListsEveryURL()])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert row(output, "phish") == ["phish", "0", "1", "3", "1", "0", "5"]
+    assert row(output, "ham") == ["ham", "1", "1", "1", "0", "0", "3"]
+    assert "Live evaluation" in output
+
+
+class KnowsNothingButURLs:
+    """A fake Provider that looks up every kind of Observable except URLs, and knows none of them."""
+
+    name = "FakeIntel"
+    handles = frozenset(ObservableKind) - {ObservableKind.URL}
+    lookups_per_minute = None
+
+    def lookup(self, observable: Observable) -> Lookup:
+        return Lookup(Outcome.UNKNOWN, "not listed")
+
+
+def test_live_mode_counts_the_final_verdict_after_the_cap(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Nobody looks meeting_link's URL up, so it is Not Checked, and the cap
+    # raises the ham from clean to suspicious, as an analyst would see it.
+    main([str(SAMPLES), "--live", "--list"], providers=[KnowsNothingButURLs()])
+
+    output = capsys.readouterr().out
+    assert listed(output, "ham/meeting_link.eml").split()[:2] == ["ham", "suspicious"]
+    assert row(output, "ham") == ["ham", "1", "2", "0", "0", "0", "3"]
+    assert "after the clean-requires-evidence cap" in output
+
+
+def test_live_mode_says_how_many_observables_were_not_checked(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Every other Observable got an answer (Unknown), so only the four URLs
+    # (three in phish, one in ham) were Not Checked.
+    main([str(SAMPLES), "--live"], providers=[KnowsNothingButURLs()])
+
+    assert "Observables Not Checked: 4 (3 in phish, 1 in ham)" in capsys.readouterr().out
