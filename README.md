@@ -178,9 +178,9 @@ uv run phishing-triage-evaluate path/to/other-folder         # any folder with p
 It prints a table like this (from the small test folder in `tests/fixtures/evaluation/`):
 
 ```
-Label         clean   suspicious    malicious  unparseable        total
-phish             1            1            2            1            5
-ham               2            1            0            0            3
+Label         clean   suspicious    malicious  unparseable        error        total
+phish             1            1            2            1            0            5
+ham               2            1            0            0            0            3
 
 False-positive rate (ham not clean): 33.3% (1 of 3 ham)
 Missed-phish rate (phish clean): 25.0% (1 of 4 phish)
@@ -188,7 +188,8 @@ Missed-phish rate (phish clean): 25.0% (1 of 4 phish)
 
 - The **False-Positive Rate** is the share of ham that wasn't called clean: legitimate email an analyst would waste time on.
 - The **Missed-Phish Rate** is the share of phish called clean: the dangerous mistake.
-- **Unparseable** samples (not an email, unreadable, or one the tool failed on) are counted and skipped, never fatal, and left out of both rates. `--list` shows why each one failed.
+- **Unparseable** samples are files that aren't emails. **Error** samples are files that couldn't be read, or that the tool itself failed on: a non-zero error count usually means a bug in a rule, worth fixing. Both are counted and skipped, never fatal, and left out of both rates. `--list` shows why each one failed.
+- Bad usage (an unknown option, say) exits with 5, as in the main CLI; a missing `phish/` or `ham/` folder with 3, and an invalid settings file with 7.
 
 It is **offline**: no Providers are asked, so nothing touches the network and no API keys are needed. That means every URL and attachment is Not Checked, which would normally raise every clean Verdict to suspicious (see "Clean requires evidence" above). So the evaluation counts the Verdict from *before* that cap, which measures the rules and weights on their own ([ADR 0015](docs/adr/0015-offline-evaluation-counts-the-verdict-before-the-cap.md)). With real lookups, some missed phish would be caught.
 
@@ -200,9 +201,11 @@ uv run phishing-triage-evaluate --list | grep -E '^ham +(suspicious|malicious)'
 
 Each line shows the label, Verdict, Score, file and which rules fired, so you can open the email and see why. A full run over the datasets takes several minutes.
 
-### Baseline
+### Baseline (a dated snapshot)
 
-The first run, with the default settings, on 8 October 2026 (12,271 phish, 2,750 ham):
+> **Snapshot: 8 October 2026, commit `cfd7a17`.** These numbers will go stale as soon as a rule, a weight or a dataset changes. They are kept as the starting point to compare against, not as the current figures: rerun the evaluation for those.
+
+The first run, with the default settings (12,271 phish, 2,750 ham). It predates the separate error column, so its one unparseable phish may have been either kind:
 
 | | clean | suspicious | malicious | unparseable |
 |---|---|---|---|---|

@@ -100,6 +100,7 @@ Step by step:
 | `providers/__init__.py` | Outside the core: `build_providers()` builds every real Provider from the API keys in the environment. |
 | `core/errors.py` | Errors the core can raise to its caller: `UnparseableEmailError` and `NoAttachedEmailError`. |
 | `cli.py` | The terminal front end: arguments (including `--inner`, and the hint to use it), printing (including the Authentication Results, the Received chain and the Claimed Origin with its verified or unverified label), saving and exit codes. |
+| `command_line.py` | What both commands share: the `ExitCode` numbers, an argument parser that exits with 5 (not argparse's 2, which would mean malicious) on bad usage, and `print_error`. One definition, so the two commands can't give a number different meanings. |
 
 ## The Offline Evaluation
 
@@ -118,15 +119,15 @@ flowchart LR
 ```
 
 1. `scripts/download_datasets.py` downloads phishing_pot (phish) and SpamAssassin easy and hard ham into the git-ignored `samples/` folder, one subfolder per dataset. The folder an email is in is its label.
-2. `phishing-triage-evaluate` checks `samples/phish/` and `samples/ham/` exist (exit code 3 if not) and loads the settings (exit code 7 if invalid).
-3. Each non-hidden file is triaged with an empty list of Providers, so nothing touches the network. A sample that can't be read, isn't an email, or makes the core fail is recorded as unparseable with the reason, and the run carries on.
+2. `phishing-triage-evaluate` checks `samples/phish/` and `samples/ham/` exist (exit code 3 if not) and loads the settings (exit code 7 if invalid). Bad usage exits with 5, as in the CLI.
+3. Each non-hidden file is triaged with an empty list of Providers, so nothing touches the network. A sample that isn't an email is recorded as **unparseable**; one that can't be read or makes the core fail is recorded as an **error**, so a bug in a rule stands out. Either way the reason is kept and the run carries on.
 4. For the rest, it keeps `verdict_before_cap` from the Triage Report: with no Providers everything is Not Checked, so the capped Verdict would never be clean ([ADR 0015](adr/0015-offline-evaluation-counts-the-verdict-before-the-cap.md)).
-5. It prints, per label, how many samples got each Verdict and how many were unparseable, then the **False-Positive Rate** and **Missed-Phish Rate**. With `--list`, each sample's label, Verdict, Score, path and fired rules come first.
+5. It prints, per label, how many samples got each Verdict, how many were unparseable and how many were errors, then the **False-Positive Rate** and **Missed-Phish Rate**. With `--list`, each sample's label, Verdict, Score, path and fired rules come first.
 
 | File | What it does |
 |---|---|
 | `evaluation.py` | The `phishing-triage-evaluate` command: finds the samples, triages each offline, counts the Verdicts and works out the two rates. `main()` takes `rules` like `triage()` does, so tests can pass a rule that fails on purpose. |
-| `scripts/download_datasets.py` | Downloads the datasets. It reads each archive and writes each email under its plain file name, so a crafted archive can't write outside its folder. Not run by tests. |
+| `scripts/download_datasets.py` | Downloads the datasets. It reads each archive and writes each email under its plain file name (`_save_emails`), so a crafted archive can't write outside its folder. The download is never run by tests; `tests/test_download_datasets.py` checks the archive handling on tiny archives built in the test. |
 | `tests/fixtures/evaluation/` | A tiny hand-made samples folder (five phish, one of them not an email, and three ham) whose Verdicts were worked out by hand, used by `tests/test_evaluation.py`. |
 
 ## What comes next

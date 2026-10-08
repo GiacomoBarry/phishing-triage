@@ -142,6 +142,14 @@ _Avoid_: Clean email (clean is a Verdict), benign, negative
 Running the rules over every Phish and Ham sample with no Providers, and counting the Verdict each gets from before the clean-requires-evidence cap (ADR 0015). It measures the rules and weights alone.
 _Avoid_: Benchmark, test run, live evaluation (that one asks the real Providers)
 
+**Unparseable Sample**:
+A sample that isn't an email, so it gets no Verdict. Counted in the Offline Evaluation's table but left out of both rates.
+_Avoid_: Error (that one is our fault), bad sample
+
+**Error Sample**:
+A sample the Offline Evaluation couldn't triage through no fault of the email: the file couldn't be read, or the core failed on it (usually a bug in a rule). Counted in its own column, apart from Unparseable Samples, and left out of both rates.
+_Avoid_: Unparseable (that one is the email's fault), crash
+
 **False-Positive Rate**:
 The share of triaged Ham whose Verdict isn't clean: legitimate email an analyst would waste time on.
 _Avoid_: Error rate, FP (spell it out)
