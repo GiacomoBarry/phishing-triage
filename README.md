@@ -62,7 +62,7 @@ uv run phishing-triage path/to/email.eml --json   # print the Triage Report as J
 
 Every run saves the Triage Report to `reports/<report-id>.json`. That folder is git-ignored.
 
-In the readable view and the Incident Note, every URL and link domain is **defanged** (`hxxps://evil[.]com/login`) so nobody can click it by accident. The `--json` output keeps the real values, because it is meant for other programs.
+In the readable view and the Incident Note, every URL and domain is **defanged** (`hxxps://evil[.]com/login`) so nobody can click it by accident. The `--json` output keeps the real values, because it is meant for other programs.
 
 ### How the Verdict is reached
 
@@ -74,19 +74,19 @@ A **Verdict** can only be clean if every URL and attachment got a real answer fr
 
 ### The Incident Note and Recommended Actions
 
-The Incident Note has five sections, in order: a one-line summary (Verdict, Score, sender, subject), the key Findings with their evidence, every Observable defanged, what was Not Checked and why, and **Recommended Actions**.
+The Incident Note has five sections, in order: a one-line summary (Verdict, Score, sender, subject), the key Findings with their evidence, the **IOCs** (Observables a Provider reported as malicious) followed by the other Observables, what was Not Checked and why, and **Recommended Actions**. Everything clickable is defanged, including the sender's address in the summary (`billing@evil[.]example`).
 
-Recommended Actions are next steps for you, chosen from a fixed list based on the Verdict and which Findings fired. The tool only suggests them: it never blocks, searches, resets or emails anything. The list, in the order it appears:
+Recommended Actions are next steps for you, chosen from a fixed list based on the Verdict and which Findings fired ([ADR 0013](docs/adr/0013-recommended-actions-are-chosen-from-one-table.md)). The tool only suggests them: it never blocks, searches, resets or emails anything. The list, in the order it appears:
 
 1. Block the malicious URLs, domains or attachment hashes (each listed, defanged), when a Provider reported any as malicious.
-2. Block the sender domain, when the Verdict is malicious.
+2. Block the sender domain, when the Verdict is malicious (unless it is already listed in action 1).
 3. Search all mailboxes for copies of the email and remove them, when the Verdict is malicious or suspicious.
 4. Check web proxy logs for anyone who visited the links (malicious or suspicious, with links).
 5. Check whether anyone opened the attachment (malicious or suspicious, with attachments).
 6. If a recipient entered their password, reset it and revoke their sessions (malicious or suspicious, with a link, and a Lookalike Domain, display-name impersonation or newly registered domain Finding).
 7. Confirm with the apparent sender through a contact you already know, when there is a Reply-To mismatch or display-name impersonation.
 8. Check the Not Checked items by hand before closing, when anything was Not Checked.
-9. Close with no action and tell the reporter the email looks safe, when the Verdict is clean and nothing was Not Checked.
+9. Close with no action and tell the reporter the email looks safe, when the Verdict is clean, nothing was Not Checked and no other action applies.
 
 ### Tuning the settings
 

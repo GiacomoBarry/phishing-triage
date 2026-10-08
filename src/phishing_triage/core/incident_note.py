@@ -1,14 +1,15 @@
 """The Incident Note: a plain-text summary of a Triage Report for a ticket.
 
 Generating it is a pure function: it only reads the report. It has five
-sections, in order: the summary line, Key Findings, the defanged
-Observables, Not Checked and Recommended Actions.
+sections, in order: the summary line, Key Findings, the IOCs and other
+Observables (defanged), Not Checked and Recommended Actions.
 """
 
 from phishing_triage.core.findings import Finding
 from phishing_triage.core.observables import describe_observable
 from phishing_triage.core.recommended_actions import recommended_actions
 from phishing_triage.core.report import TriageReport
+from phishing_triage.core.urls import defang_email_address
 
 
 def incident_note(report: TriageReport) -> str:
@@ -24,8 +25,8 @@ def incident_note(report: TriageReport) -> str:
 
 
 def _summary_line(report: TriageReport) -> str:
-    """One line a busy analyst can scan: Verdict, Score, sender and subject."""
-    sender = report.from_address or "(no From address)"
+    """One line a busy analyst can scan: Verdict, Score, sender (defanged) and subject."""
+    sender = defang_email_address(report.from_address) if report.from_address else "(no From address)"
     subject = report.subject or "(no subject)"
     return (
         f"Verdict: {report.verdict.upper()} | Score: {report.score}/100"
@@ -45,12 +46,19 @@ def _key_findings(report: TriageReport) -> str:
 def _observables(report: TriageReport) -> str:
     """Every Observable, defanged so nobody can click it from the ticket.
 
-    Not every Observable is an IOC: the ones a Provider reported as
-    malicious are listed again in Recommended Actions, to be blocked.
+    The IOCs (Observables a Provider reported as malicious) come first, so
+    they are easy to find; the rest follow under their own heading. The
+    IOCs are listed again in Recommended Actions, to be blocked.
     """
-    lines = ["Observables (defanged):"]
-    lines += [f"- {describe_observable(o, report.attachments)}" for o in report.observables]
-    if not report.observables:
+    iocs = report.iocs()
+    others = [observable for observable in report.observables if observable not in iocs]
+    lines = ["IOCs (defanged):"]
+    lines += [f"- {describe_observable(o, report.attachments)}" for o in iocs]
+    if not iocs:
+        lines.append("- None judged malicious.")
+    lines.append("Other Observables:")
+    lines += [f"- {describe_observable(o, report.attachments)}" for o in others]
+    if not others:
         lines.append("- None.")
     return "\n".join(lines)
 

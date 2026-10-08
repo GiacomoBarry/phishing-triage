@@ -122,7 +122,7 @@ def test_incident_note_opens_with_a_one_line_summary() -> None:
     note = incident_note(report)
 
     assert note.splitlines()[0] == (
-        "Verdict: CLEAN | Score: 0/100 | Sender: news@example.org"
+        "Verdict: CLEAN | Score: 0/100 | Sender: news@example[.]org"
         " | Subject: Your October update"
     )
 
@@ -233,14 +233,16 @@ def test_incident_note_has_all_five_sections_in_order() -> None:
     note = incident_note(report)
 
     assert note == (
-        "Verdict: CLEAN | Score: 20/100 | Sender: payroll@example.org"
+        "Verdict: CLEAN | Score: 20/100 | Sender: payroll@example[.]org"
         " | Subject: Update your bank details\n"
         "\n"
         "Key Findings:\n"
         "- Reply-To domain attacker.example differs from From domain"
         " example.org. (+20 points)\n"
         "\n"
-        "Observables (defanged):\n"
+        "IOCs (defanged):\n"
+        "- None judged malicious.\n"
+        "Other Observables:\n"
         "- Sender domain: example[.]org\n"
         "\n"
         "Not Checked:\n"
@@ -690,7 +692,7 @@ def test_incident_note_lists_observables_defanged_and_nothing_clickable() -> Non
     note = incident_note(triage(raw, DEFAULT_SETTINGS, providers=[]))
 
     assert (
-        "Observables (defanged):\n"
+        "Other Observables:\n"
         "- Sender domain: example[.]org\n"
         "- URL: hxxps://bit[.]ly/abc\n"
         "- URL: hxxp://evil[.]example/login.php\n"
@@ -2212,7 +2214,7 @@ def test_a_phrase_inside_a_longer_matched_phrase_is_not_quoted_twice() -> None:
 # --- Recommended Actions: the last section of the Incident Note (ticket 15) ---
 
 
-def recommended_actions(report: TriageReport) -> list[str]:
+def actions_in_note(report: TriageReport) -> list[str]:
     """The Recommended Actions in a report's Incident Note, one per line, without the bullets."""
     section = incident_note(report).split("Recommended Actions:\n")[1]
     return [line.removeprefix("- ") for line in section.splitlines() if line.startswith("- ")]
@@ -2222,7 +2224,7 @@ def test_a_clean_email_with_everything_checked_is_closed_with_no_action() -> Non
     report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()])
 
     assert report.verdict is Verdict.CLEAN
-    assert recommended_actions(report) == [
+    assert actions_in_note(report) == [
         "Close with no action, and tell the reporter the email looks safe.",
     ]
 
@@ -2232,7 +2234,7 @@ def test_a_verdict_capped_for_missing_evidence_asks_for_the_gaps_to_be_checked_b
 
     assert report.verdict_before_cap is Verdict.CLEAN
     assert report.verdict is Verdict.SUSPICIOUS
-    assert recommended_actions(report) == [
+    assert actions_in_note(report) == [
         "Search all mailboxes for copies of this email (same sender or subject) and remove them.",
         "Check web proxy logs for anyone who visited the email's links.",
         "Check the Not Checked items by hand before closing the ticket.",
@@ -2278,7 +2280,7 @@ def test_a_credential_phishing_sign_with_a_link_suggests_resetting_passwords(rul
     assert report.verdict is Verdict.SUSPICIOUS
     assert (
         "If a recipient entered their password, reset it and revoke their active sessions."
-        in recommended_actions(report)
+        in actions_in_note(report)
     )
 
 
@@ -2291,10 +2293,10 @@ def test_no_password_reset_without_a_link_or_a_credential_phishing_sign() -> Non
         LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()], rules=[a_finding_from("url_shortener")]
     )
 
-    assert recommended_actions(suspicious_without_link) == [
+    assert actions_in_note(suspicious_without_link) == [
         "Search all mailboxes for copies of this email (same sender or subject) and remove them.",
     ]
-    assert recommended_actions(suspicious_without_sign) == [
+    assert actions_in_note(suspicious_without_sign) == [
         "Search all mailboxes for copies of this email (same sender or subject) and remove them.",
         "Check web proxy logs for anyone who visited the email's links.",
     ]
@@ -2306,6 +2308,47 @@ def test_a_clean_email_with_something_not_checked_is_not_closed_until_it_is_chec
     report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[urls_only])
 
     assert report.verdict is Verdict.CLEAN
-    assert recommended_actions(report) == [
+    assert actions_in_note(report) == [
         "Check the Not Checked items by hand before closing the ticket.",
     ]
+
+
+def test_a_clean_email_with_another_action_to_take_is_not_also_closed() -> None:
+    sender_domains = FakeProvider(handles=frozenset({ObservableKind.SENDER_DOMAIN}))
+
+    report = triage(load("reply_to_mismatch.eml"), DEFAULT_SETTINGS, providers=[sender_domains])
+
+    assert report.verdict is Verdict.CLEAN
+    assert report.not_checked == []
+    assert actions_in_note(report) == [
+        "Confirm with the apparent sender through a contact you already know, not the details in this email.",
+    ]
+
+
+def test_a_sender_domain_already_listed_as_an_ioc_is_not_blocked_twice() -> None:
+    raw = email_with_body(plain="Hello.")
+    sender_domains = FakeProvider(handles=frozenset({ObservableKind.SENDER_DOMAIN}), default=LISTED)
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[sender_domains])
+
+    assert report.verdict is Verdict.MALICIOUS
+    assert actions_in_note(report) == [
+        "Block these malicious URLs, domains or attachment hashes:",
+        "Search all mailboxes for copies of this email (same sender or subject) and remove them.",
+    ]
+    assert "  - Sender domain: example[.]org\n" in incident_note(report)
+
+
+def test_incident_note_lists_iocs_apart_from_the_other_observables() -> None:
+    provider = FakeProvider(answers={"https://evil.example/invoice": LISTED})
+
+    note = incident_note(triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[provider]))
+
+    assert (
+        "\n\n"
+        "IOCs (defanged):\n"
+        "- URL: hxxps://evil[.]example/invoice\n"
+        "Other Observables:\n"
+        "- Domain: evil[.]example\n"
+        "\n"
+    ) in note

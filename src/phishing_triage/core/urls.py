@@ -77,6 +77,12 @@ def defang_domain(domain: str) -> str:
     return domain.replace(".", "[.]")
 
 
+def defang_email_address(address: str) -> str:
+    """Make an email address's domain unclickable for display: billing@evil.com becomes billing@evil[.]com."""
+    local_part, at, domain = address.rpartition("@")
+    return f"{local_part}{at}{defang_domain(domain)}"
+
+
 class _HtmlPieces(HTMLParser):
     """Collects link targets and visible text from HTML, in document order.
 

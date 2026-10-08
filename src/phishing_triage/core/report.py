@@ -15,6 +15,7 @@ from phishing_triage.core.authentication import AuthenticationResults
 from phishing_triage.core.findings import Finding
 from phishing_triage.core.lookups import LookupResult, NotChecked
 from phishing_triage.core.observables import Observable
+from phishing_triage.core.providers import Outcome
 from phishing_triage.core.received import ClaimedOrigin, ReceivedHop
 
 FORMAT_VERSION = 1
@@ -73,6 +74,11 @@ class TriageReport:
     # Reserved for MITRE ATT&CK mapping in a later phase.
     tags: list[str] = field(default_factory=list)
     format_version: int = FORMAT_VERSION
+
+    def iocs(self) -> list[Observable]:
+        """Every IOC: each Observable a Provider reported as malicious, in email order."""
+        flagged = {result.observable for result in self.lookups if result.outcome is Outcome.MALICIOUS}
+        return [observable for observable in self.observables if observable in flagged]
 
     def to_dict(self) -> dict[str, Any]:
         """Return the report as plain data, ready to be written out as JSON."""

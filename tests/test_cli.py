@@ -83,7 +83,7 @@ def test_clean_email_prints_readable_view_and_exits_0(
     assert "Your October update" in out
     assert "CLEAN" in out
     assert (
-        "Verdict: CLEAN | Score: 0/100 | Sender: news@example.org"
+        "Verdict: CLEAN | Score: 0/100 | Sender: news@example[.]org"
         " | Subject: Your October update"
     ) in out
 

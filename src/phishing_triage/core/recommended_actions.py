@@ -5,14 +5,13 @@ path blocks, searches, resets or emails anything. The analyst stays in control.
 
 Choosing them is a pure function of the Triage Report, like the Incident Note.
 The whole choice is the RECOMMENDED_ACTIONS table at the bottom: one row per
-action, saying when it applies and what it says.
+action, saying when it applies and what it says (ADR 0013).
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from phishing_triage.core.observables import Observable, ObservableKind, defanged, describe_observable
-from phishing_triage.core.providers import Outcome
+from phishing_triage.core.observables import ObservableKind, describe_observable
 from phishing_triage.core.report import TriageReport, Verdict
 from phishing_triage.core.rules import (
     DISPLAY_NAME_IMPERSONATION,
@@ -20,12 +19,13 @@ from phishing_triage.core.rules import (
     NEWLY_REGISTERED_DOMAIN,
     REPLY_TO_MISMATCH,
 )
+from phishing_triage.core.urls import defang_domain
 
 # Findings that suggest a fake login page: a link pretending to be someone it isn't.
-CREDENTIAL_PHISHING_SIGNS = (LOOKALIKE_DOMAIN, DISPLAY_NAME_IMPERSONATION, NEWLY_REGISTERED_DOMAIN)
+_CREDENTIAL_PHISHING_SIGNS = (LOOKALIKE_DOMAIN, DISPLAY_NAME_IMPERSONATION, NEWLY_REGISTERED_DOMAIN)
 
 # Findings that suggest the email isn't really from who it says.
-IMPERSONATION_SIGNS = (REPLY_TO_MISMATCH, DISPLAY_NAME_IMPERSONATION)
+_IMPERSONATION_SIGNS = (REPLY_TO_MISMATCH, DISPLAY_NAME_IMPERSONATION)
 
 
 @dataclass(frozen=True)
@@ -34,23 +34,27 @@ class RecommendedAction:
 
     # Does this action apply to the report?
     applies: Callable[[TriageReport], bool]
-    # The suggestion, worded for a human. A function when the wording
-    # quotes something from the report, such as the IOCs to block.
-    says: str | Callable[[TriageReport], str]
+    # The suggestion, worded for a human. It takes the report so the wording
+    # can quote from it, such as the IOCs to block.
+    says: Callable[[TriageReport], str]
 
 
 # --- Small questions about the report ---
 
 
-def _malicious_observables(report: TriageReport) -> list[Observable]:
-    """Every Observable a Provider reported as malicious (each one a Decisive Finding), in email order."""
-    flagged = {result.observable for result in report.lookups if result.outcome is Outcome.MALICIOUS}
-    return [observable for observable in report.observables if observable in flagged]
+def _sender_domain_to_block(report: TriageReport) -> str:
+    """The sender domain to block on its own, or "" if there isn't one.
 
-
-def _sender_domain(report: TriageReport) -> Observable | None:
-    """The sender domain Observable, or None if the email has no From domain."""
-    return next((o for o in report.observables if o.kind is ObservableKind.SENDER_DOMAIN), None)
+    Only a malicious email's sender domain is blocked. If a Provider flagged
+    the sender domain itself, it is already in the IOCs to block, so it isn't
+    blocked a second time.
+    """
+    if report.verdict is not Verdict.MALICIOUS:
+        return ""
+    sender_domain = next((o for o in report.observables if o.kind is ObservableKind.SENDER_DOMAIN), None)
+    if sender_domain is None or sender_domain in report.iocs():
+        return ""
+    return sender_domain.value
 
 
 def _has(report: TriageReport, kind: ObservableKind) -> bool:
@@ -71,12 +75,12 @@ def _not_clean(report: TriageReport) -> bool:
 # --- When each action applies ---
 
 
-def _has_malicious_lookups(report: TriageReport) -> bool:
-    return bool(_malicious_observables(report))
+def _has_iocs(report: TriageReport) -> bool:
+    return bool(report.iocs())
 
 
-def _malicious_with_sender_domain(report: TriageReport) -> bool:
-    return report.verdict is Verdict.MALICIOUS and _sender_domain(report) is not None
+def _has_sender_domain_to_block(report: TriageReport) -> bool:
+    return bool(_sender_domain_to_block(report))
 
 
 def _not_clean_with_links(report: TriageReport) -> bool:
@@ -88,11 +92,11 @@ def _not_clean_with_attachments(report: TriageReport) -> bool:
 
 
 def _may_have_stolen_passwords(report: TriageReport) -> bool:
-    return _not_clean_with_links(report) and _fired(report, CREDENTIAL_PHISHING_SIGNS)
+    return _not_clean_with_links(report) and _fired(report, _CREDENTIAL_PHISHING_SIGNS)
 
 
 def _sender_may_be_impersonated(report: TriageReport) -> bool:
-    return _fired(report, IMPERSONATION_SIGNS)
+    return _fired(report, _IMPERSONATION_SIGNS)
 
 
 def _anything_not_checked(report: TriageReport) -> bool:
@@ -100,57 +104,79 @@ def _anything_not_checked(report: TriageReport) -> bool:
     return bool(report.not_checked or report.cap_reason)
 
 
-def _clean_and_fully_checked(report: TriageReport) -> bool:
-    return report.verdict is Verdict.CLEAN and not _anything_not_checked(report)
+# --- What each action says ---
 
 
-# --- Wording that quotes the report ---
+def _fixed(text: str) -> Callable[[TriageReport], str]:
+    """Wording that is the same whatever the report."""
+
+    def says(report: TriageReport) -> str:
+        return text
+
+    return says
 
 
 def _block_iocs(report: TriageReport) -> str:
     """The block action, with each IOC defanged on its own indented line."""
     lines = ["Block these malicious URLs, domains or attachment hashes:"]
-    lines += [f"  - {describe_observable(o, report.attachments)}" for o in _malicious_observables(report)]
+    lines += [f"  - {describe_observable(o, report.attachments)}" for o in report.iocs()]
     return "\n".join(lines)
 
 
 def _block_sender_domain(report: TriageReport) -> str:
-    sender_domain = _sender_domain(report)
-    # Only called when _malicious_with_sender_domain is true, so there is one.
-    assert sender_domain is not None
-    return f"Block the sender domain {defanged(sender_domain)}."
+    return f"Block the sender domain {defang_domain(_sender_domain_to_block(report))}."
 
 
-# The fixed list, in the order the actions appear in the Incident Note.
-RECOMMENDED_ACTIONS: tuple[RecommendedAction, ...] = (
-    RecommendedAction(_has_malicious_lookups, _block_iocs),
-    RecommendedAction(_malicious_with_sender_domain, _block_sender_domain),
+# Every action that asks the analyst to do something, in the order they appear in the Incident Note.
+_ACTIONS_TO_TAKE: tuple[RecommendedAction, ...] = (
+    RecommendedAction(_has_iocs, _block_iocs),
+    RecommendedAction(_has_sender_domain_to_block, _block_sender_domain),
     RecommendedAction(
         _not_clean,
-        "Search all mailboxes for copies of this email (same sender or subject) and remove them.",
+        _fixed("Search all mailboxes for copies of this email (same sender or subject) and remove them."),
     ),
-    RecommendedAction(_not_clean_with_links, "Check web proxy logs for anyone who visited the email's links."),
-    RecommendedAction(_not_clean_with_attachments, "Check whether anyone opened the attachment."),
+    RecommendedAction(
+        _not_clean_with_links,
+        _fixed("Check web proxy logs for anyone who visited the email's links."),
+    ),
+    RecommendedAction(_not_clean_with_attachments, _fixed("Check whether anyone opened the attachment.")),
     RecommendedAction(
         _may_have_stolen_passwords,
-        "If a recipient entered their password, reset it and revoke their active sessions.",
+        _fixed("If a recipient entered their password, reset it and revoke their active sessions."),
     ),
     RecommendedAction(
         _sender_may_be_impersonated,
-        "Confirm with the apparent sender through a contact you already know, not the details in this email.",
+        _fixed(
+            "Confirm with the apparent sender through a contact you already know,"
+            " not the details in this email."
+        ),
     ),
-    RecommendedAction(_anything_not_checked, "Check the Not Checked items by hand before closing the ticket."),
     RecommendedAction(
-        _clean_and_fully_checked,
-        "Close with no action, and tell the reporter the email looks safe.",
+        _anything_not_checked,
+        _fixed("Check the Not Checked items by hand before closing the ticket."),
+    ),
+)
+
+
+def _nothing_else_to_do(report: TriageReport) -> bool:
+    """Is the email clean, fully checked, and is there no other action to take?"""
+    return (
+        report.verdict is Verdict.CLEAN
+        and not _anything_not_checked(report)
+        and not any(action.applies(report) for action in _ACTIONS_TO_TAKE)
+    )
+
+
+# The fixed list, in the order the actions appear in the Incident Note.
+# Closing comes last, and only when no other action applies.
+RECOMMENDED_ACTIONS: tuple[RecommendedAction, ...] = _ACTIONS_TO_TAKE + (
+    RecommendedAction(
+        _nothing_else_to_do,
+        _fixed("Close with no action, and tell the reporter the email looks safe."),
     ),
 )
 
 
 def recommended_actions(report: TriageReport) -> list[str]:
     """Return the text of every Recommended Action that applies to the report, in table order."""
-    chosen = []
-    for action in RECOMMENDED_ACTIONS:
-        if action.applies(report):
-            chosen.append(action.says if isinstance(action.says, str) else action.says(report))
-    return chosen
+    return [action.says(report) for action in RECOMMENDED_ACTIONS if action.applies(report)]
