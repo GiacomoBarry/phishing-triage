@@ -1,13 +1,15 @@
 """Tests at Seam 1: the core entry point, `triage()`."""
 
+import base64
 import builtins
 import hashlib
 import io
 import os
+import quopri
 import socket
 import urllib.request
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from email.message import EmailMessage
@@ -42,6 +44,7 @@ from phishing_triage.core import (
     RuleInput,
     Settings,
     TriageReport,
+    UnparseableAttachedEmailError,
     UnparseableEmailError,
     Verdict,
     WaitingForRateLimit,
@@ -2490,10 +2493,10 @@ def test_inner_says_when_the_attached_email_has_an_email_attached_too() -> None:
     ]
 
 
-def test_inner_refuses_an_attached_eml_file_that_is_not_an_email() -> None:
+def test_inner_says_it_is_the_attached_email_that_cannot_be_parsed() -> None:
     raw = email_with_attachments(("phish.eml", b"\x00\x01 not an email", "application/octet-stream"))
 
-    with pytest.raises(UnparseableEmailError):
+    with pytest.raises(UnparseableAttachedEmailError, match="^The attached email is not a parseable email"):
         triage(raw, DEFAULT_SETTINGS, providers=[], inner=True)
 
 
@@ -2545,3 +2548,22 @@ def test_an_attached_email_is_hashed_as_its_original_bytes() -> None:
     assert as_wrapper.attachments[0].size == len(PHISH_AS_SAVED)
     assert inner.source_sha256 == phish_sha256
     assert inner.subject == "Your account is locked ⚠"
+
+
+@pytest.mark.parametrize(
+    ("transfer_encoding", "encode"),
+    [
+        pytest.param("base64", base64.encodebytes, id="base64"),
+        pytest.param("quoted-printable", quopri.encodestring, id="quoted-printable"),
+    ],
+)
+def test_inner_undoes_the_transfer_encoding_of_an_attached_email(
+    transfer_encoding: str, encode: Callable[[bytes], bytes]
+) -> None:
+    phish = PHISH_AS_SAVED.replace(b"\r\n", b"\n")  # Quoted-printable can't keep CRLF line endings.
+    wrapper = a_wrapper_email_around(encode(phish), transfer_encoding)
+
+    report = triage(wrapper, DEFAULT_SETTINGS, providers=[], inner=True)
+
+    assert report.subject == "Your account is locked \u26a0"
+    assert report.source_sha256 == hashlib.sha256(phish).hexdigest()

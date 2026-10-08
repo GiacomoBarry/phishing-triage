@@ -13,7 +13,7 @@ from phishing_triage.core.attachments import extract_attachments
 from phishing_triage.core.authentication import read_authentication_results
 from phishing_triage.core.cache import LookupCache
 from phishing_triage.core.clock import Clock, SystemClock
-from phishing_triage.core.errors import NoAttachedEmailError, UnparseableEmailError
+from phishing_triage.core.errors import NoAttachedEmailError, UnparseableAttachedEmailError, UnparseableEmailError
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.lookups import Progress, find_not_checked, run_lookups
 from phishing_triage.core.observables import extract_observables
@@ -151,7 +151,10 @@ def _choose_email(raw_email: bytes, inner: bool) -> tuple[bytes, EmailMessage, s
             f"The Wrapper Email has {count} emails attached. Only the first was triaged;"
             " extract the others by hand to triage them."
         )
-    chosen_message = _parse(chosen)
+    try:
+        chosen_message = _parse(chosen)
+    except UnparseableEmailError as error:
+        raise UnparseableAttachedEmailError(f"The attached email is not a parseable email. {error}") from error
     if find_attached_emails(chosen):
         warnings.append(
             "The triaged email has an email attached too. --inner only looks one level deep,"

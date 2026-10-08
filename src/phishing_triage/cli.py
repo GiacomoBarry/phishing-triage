@@ -27,6 +27,7 @@ from phishing_triage.core import (
     Provider,
     Settings,
     TriageReport,
+    UnparseableAttachedEmailError,
     UnparseableEmailError,
     Verdict,
     defanged,
@@ -104,6 +105,10 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
         )
         if cache.save_error:
             print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
+    except UnparseableAttachedEmailError as error:
+        # The Wrapper Email itself is fine: it is the email inside it that isn't.
+        _print_error(f"{email_path}: {error}")
+        return ExitCode.UNPARSEABLE_EMAIL
     except UnparseableEmailError as error:
         _print_error(f"{email_path} is not a parseable email. {error}")
         return ExitCode.UNPARSEABLE_EMAIL

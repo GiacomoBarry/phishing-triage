@@ -7,7 +7,11 @@ saves files or reads environment variables: that is the CLI's job.
 from phishing_triage.core.attachments import Attachment, display_filename
 from phishing_triage.core.authentication import AuthenticationCheck, AuthenticationResults
 from phishing_triage.core.cache import LONGEST_LIFETIME, CachedLookup, LookupCache
-from phishing_triage.core.errors import NoAttachedEmailError, UnparseableEmailError
+from phishing_triage.core.errors import (
+    NoAttachedEmailError,
+    UnparseableAttachedEmailError,
+    UnparseableEmailError,
+)
 from phishing_triage.core.findings import Finding, Rule, RuleInput
 from phishing_triage.core.incident_note import describe_finding, incident_note
 from phishing_triage.core.lookups import (
@@ -55,6 +59,7 @@ __all__ = [
     "TriageReport",
     "URLHAUS",
     "VIRUSTOTAL",
+    "UnparseableAttachedEmailError",
     "UnparseableEmailError",
     "Verdict",
     "WaitingForRateLimit",

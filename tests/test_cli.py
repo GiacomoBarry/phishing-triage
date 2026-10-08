@@ -687,3 +687,16 @@ def test_inner_with_no_attached_email_exits_8_with_a_clear_error(
     err = capsys.readouterr().err
     assert "report.eml has no email attached, so --inner has nothing to triage." in err
     assert saved_reports(tmp_path) == []
+
+
+def test_inner_with_an_unparseable_attached_email_blames_the_attached_email(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wrapper = wrapper_email(tmp_path, attached="just some text, not an email\n")
+
+    exit_code = main([wrapper, "--inner"])
+
+    assert exit_code == 4
+    err = capsys.readouterr().err
+    assert f"Error: {wrapper}: The attached email is not a parseable email." in err
+    assert f"{wrapper} is not a parseable email" not in err
