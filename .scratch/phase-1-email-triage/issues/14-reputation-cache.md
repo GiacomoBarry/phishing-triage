@@ -4,7 +4,7 @@
 
 **Blocked by:** 09
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Reputation Lookup results are cached locally, keyed by Provider and Observable, in a git-ignored location
 - [x] Malicious results are kept for 7 days; Unknown, clean and suspicious results for 24 hours; Not Checked is never cached

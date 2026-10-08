@@ -4,7 +4,7 @@
 
 **Blocked by:** 09
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] VirusTotal Provider handles URLs, domains and file hashes, using lookup endpoints only, never submission or rescan (ADR 0001)
 - [x] An Observable VirusTotal has never seen is Unknown, never clean

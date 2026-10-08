@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Python 3.12+ project managed with uv, src layout, pytest configured and running
 - [x] `.gitignore` covers `.env`, the samples folder, the reports folder, the cache and `.DS_Store`; a committed `.env.example` exists

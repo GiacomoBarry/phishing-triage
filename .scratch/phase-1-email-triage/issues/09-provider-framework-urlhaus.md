@@ -4,7 +4,7 @@
 
 **Blocked by:** 07, 08
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Every Provider declares which Observable kinds it handles and returns, per Observable, one of: malicious (with detail), suspicious (with detail), clean, Unknown, or Not Checked (with reason), plus raw evidence for the report
 - [x] Providers are built by the CLI and passed into the core; the core never builds them or reads keys

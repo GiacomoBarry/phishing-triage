@@ -4,7 +4,7 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] URLs are extracted from plain-text and HTML parts (link targets and visible text), de-duplicated, and recorded as Observables along with their domains
 - [x] Offline decoding as text only: defanged forms (`hxxp`, `[.]`), HTML entities, and SafeLinks-style wrappers whose real URL sits in a query parameter
