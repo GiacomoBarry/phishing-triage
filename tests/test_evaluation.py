@@ -12,6 +12,7 @@ folder holds hand-made emails whose Verdicts were worked out by hand:
 """
 
 import socket
+import sys
 from pathlib import Path
 
 import pytest
@@ -417,3 +418,115 @@ def test_a_sample_size_that_is_not_a_positive_whole_number_is_bad_usage(
 
     assert exit_info.value.code == 5
     assert "--sample" in capsys.readouterr().err
+
+
+class ChecksDomains:
+    """A fake Provider that looks up link domains and Sender Domains, and says on stderr when it's asked."""
+
+    name = "FakeRegistry"
+    handles = frozenset({ObservableKind.DOMAIN, ObservableKind.SENDER_DOMAIN})
+    lookups_per_minute = None
+
+    def lookup(self, observable: Observable) -> Lookup:
+        print("FakeRegistry was asked", file=sys.stderr)
+        return Lookup(Outcome.UNKNOWN, "not listed")
+
+
+def test_live_mode_warns_how_many_lookups_it_will_make_before_making_any(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The fixtures have 4 URLs, 4 link domains, and a Sender Domain in each of the 7 emails.
+    main([str(SAMPLES), "--live"], providers=[ListsEveryURL(), ChecksDomains()])
+
+    err = capsys.readouterr().err
+    warning = err.index("Up to 15 Reputation Lookups")
+    assert "FakeIntel: up to 4\n" in err
+    assert "FakeRegistry: up to 11\n" in err
+    assert warning < err.index("FakeRegistry was asked")
+
+
+def test_the_lookup_estimate_leaves_out_urls_over_the_lookup_cap(
+    tmp_path: Path, in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    samples = samples_folder(tmp_path / "samples")
+    (samples / "ham" / "links.eml").write_text(
+        "From: a@example.org\nSubject: Links\n\nhttps://one.example/a https://two.example/b\n"
+    )
+    settings = edited_settings(tmp_path, "url_cap = 10", "url_cap = 1")
+
+    main([str(samples), "--live", "--settings", settings], providers=[ListsEveryURL()])
+
+    assert "FakeIntel: up to 1\n" in capsys.readouterr().err
+
+
+class FakeClock:
+    """A clock that never really waits: sleeping just moves its time on."""
+
+    def __init__(self) -> None:
+        self.time = 1000.0
+
+    def now(self) -> float:
+        return self.time
+
+    def sleep(self, seconds: float) -> None:
+        self.time += seconds
+
+
+class SixAMinute:
+    """A fake Provider allowing 6 lookups a minute, noting when it was asked about each URL."""
+
+    name = "FakeIntel"
+    handles = frozenset({ObservableKind.URL})
+    lookups_per_minute = 6
+
+    def __init__(self, clock: FakeClock, answer: Lookup = Lookup(Outcome.UNKNOWN, "not listed")) -> None:
+        self.clock = clock
+        self.answer = answer
+        self.asked_at: list[float] = []
+
+    def lookup(self, observable: Observable) -> Lookup:
+        self.asked_at.append(self.clock.now())
+        return self.answer
+
+
+def test_live_mode_keeps_to_each_providers_rate_limit_across_samples(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Each of the 4 URLs is in a different email. A Provider allowing 6 a minute
+    # must be asked at most once every 10 seconds over the whole run, not just
+    # within one email.
+    clock = FakeClock()
+    provider = SixAMinute(clock)
+
+    main([str(SAMPLES), "--live"], providers=[provider], clock=clock)
+
+    assert len(provider.asked_at) == 4
+    gaps = [later - earlier for earlier, later in zip(provider.asked_at, provider.asked_at[1:])]
+    assert all(gap >= 10 for gap in gaps), gaps
+    assert "for FakeIntel's rate limit..." in capsys.readouterr().err
+
+
+def test_the_lookup_estimate_says_how_long_a_rate_limit_makes_the_run_take(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 4 lookups at 6 a minute: three gaps of 11 seconds (10, plus the 10% safety margin).
+    clock = FakeClock()
+
+    main([str(SAMPLES), "--live"], providers=[SixAMinute(clock)], clock=clock)
+
+    assert "FakeIntel: up to 4 (at most 6 a minute, so at least 33 seconds)\n" in capsys.readouterr().err
+
+
+def test_a_provider_that_says_to_stop_asking_is_not_asked_again_for_the_rest_of_the_run(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A rate-limited or rejected key won't recover in the next email, and
+    # asking again would only use up more of the daily quota.
+    clock = FakeClock()
+    provider = SixAMinute(clock, Lookup(Outcome.NOT_CHECKED, "rate limited", stop_asking=True))
+
+    main([str(SAMPLES), "--live"], providers=[provider], clock=clock)
+
+    captured = capsys.readouterr()
+    assert len(provider.asked_at) == 1
+    assert "Not asking FakeIntel again in this evaluation: rate limited" in captured.err

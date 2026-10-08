@@ -23,9 +23,22 @@ from dotenv import load_dotenv
 
 from phishing_triage.command_line import ArgumentParser, ExitCode, print_error
 from phishing_triage.config import SettingsError, load_settings
-from phishing_triage.core import Provider, Rule, Settings, UnparseableEmailError, Verdict, triage
+from phishing_triage.core import (
+    SAFETY_MARGIN,
+    Clock,
+    Observable,
+    ObservableKind,
+    Provider,
+    Rule,
+    Settings,
+    SystemClock,
+    UnparseableEmailError,
+    Verdict,
+    triage,
+)
 from phishing_triage.core.rules import BUILT_IN_RULES
 from phishing_triage.providers import build_providers
+from phishing_triage.run_wide_pacing import RunWidePacing
 
 SAMPLES_DIR = Path("samples")  # Ignored by git: raw samples hold real people's addresses
 SAMPLE_LABELS = ("phish", "ham")
@@ -60,6 +73,8 @@ class SampleResult:
     # How many of its Observables were Not Checked. Only meaningful live:
     # offline, nothing is checked.
     not_checked: int = 0
+    # What was pulled out of the email, in email order, to estimate the lookups a live run makes.
+    observables: tuple[Observable, ...] = ()
 
     @property
     def outcome(self) -> Verdict | Failure:
@@ -74,12 +89,14 @@ def main(
     argv: Sequence[str] | None = None,
     rules: Sequence[Rule] = BUILT_IN_RULES,
     providers: Sequence[Provider] | None = None,
+    clock: Clock | None = None,
 ) -> int:
     """Run the evaluation command and return the exit code.
 
     `rules` defaults to the built-in red-flag rules. With --live, `providers`
     defaults to the real ones, with API keys from the environment or a .env
-    file in the current folder. Tests pass their own rules and fake Providers.
+    file in the current folder, and `clock` to the real clock, used to wait
+    out rate limits. Tests pass their own rules, fake Providers and a fake clock.
     """
     args = _parse_args(argv)
     for label in SAMPLE_LABELS:
@@ -102,8 +119,14 @@ def main(
     if args.live:
         if providers is None:
             providers = _real_providers(settings)
+        # A quick offline pass first finds each sample's Observables, to say
+        # how many lookups the live run will make before it makes any.
+        offline_results = [_evaluate_sample(label, path, settings, rules) for label, path in samples]
+        print(_lookup_estimate(offline_results, providers, settings.url_cap), file=sys.stderr, flush=True)
         print(f"Triaging {len(samples)} samples with live lookups...", file=sys.stderr, flush=True)
-        results = [_evaluate_sample(label, path, settings, rules, providers) for label, path in samples]
+        clock = clock or SystemClock()
+        live = _LiveLookups([RunWidePacing(provider, clock) for provider in providers], clock)
+        results = [_evaluate_sample(label, path, settings, rules, live) for label, path in samples]
         print(f"Live evaluation of {args.samples}: rules plus Reputation Lookups.")
         print("Verdicts are the final ones, after the clean-requires-evidence cap.")
     else:
@@ -125,14 +148,22 @@ def main(
     return ExitCode.OK
 
 
+@dataclass(frozen=True)
+class _LiveLookups:
+    """What a live run triages each sample with: the paced Providers, and the clock they wait on."""
+
+    providers: list[Provider]
+    clock: Clock
+
+
 def _evaluate_sample(
     label: str,
     path: Path,
     settings: Settings,
     rules: Sequence[Rule],
-    providers: Sequence[Provider] | None = None,
+    live: _LiveLookups | None = None,
 ) -> SampleResult:
-    """Triage one sample, offline (no `providers`) or live, and keep its Verdict.
+    """Triage one sample, offline (no `live`) or live, and keep its Verdict.
 
     Offline, every URL and attachment is Not Checked, so the
     clean-requires-evidence cap would raise every clean Verdict to
@@ -149,7 +180,10 @@ def _evaluate_sample(
     except OSError as error:
         return _failed(label, path, Failure.ERROR, f"could not be read: {error.strerror}")
     try:
-        report = triage(raw_email, settings, providers=providers or [], rules=rules)
+        if live is None:
+            report = triage(raw_email, settings, providers=[], rules=rules)
+        else:
+            report = triage(raw_email, settings, live.providers, rules=rules, clock=live.clock)
     except UnparseableEmailError as error:
         return _failed(label, path, Failure.UNPARSEABLE, str(error))
     # Deliberately broad: real datasets hold emails odd enough to trip up the
@@ -157,8 +191,10 @@ def _evaluate_sample(
     except Exception as error:
         return _failed(label, path, Failure.ERROR, f"the core failed ({type(error).__name__}: {error})")
     rule_ids = ", ".join(finding.rule_id for finding in report.findings)
-    verdict = report.verdict if providers is not None else report.verdict_before_cap
-    return SampleResult(label, path, verdict, None, report.score, rule_ids, len(report.not_checked))
+    verdict = report.verdict_before_cap if live is None else report.verdict
+    return SampleResult(
+        label, path, verdict, None, report.score, rule_ids, len(report.not_checked), tuple(report.observables)
+    )
 
 
 def _failed(label: str, path: Path, failure: Failure, reason: str) -> SampleResult:
@@ -183,6 +219,37 @@ def _samples(folder: Path) -> list[Path]:
         for path in folder.rglob("*")
         if path.is_file() and not any(part.startswith(".") for part in path.relative_to(folder).parts)
     )
+
+
+def _lookup_estimate(results: list[SampleResult], providers: Sequence[Provider], url_cap: int) -> str:
+    """A warning of the most Reputation Lookups a live run will make, for each Provider.
+
+    It's the most because a fresh cached answer is used instead of asking,
+    and a Provider that stops answering isn't asked again.
+    """
+    counts = {provider.name: 0 for provider in providers}
+    for result in results:
+        urls = [o for o in result.observables if o.kind is ObservableKind.URL]
+        to_look_up = [o for o in result.observables if o.kind is not ObservableKind.URL] + urls[:url_cap]
+        for provider in providers:
+            counts[provider.name] += sum(1 for o in to_look_up if o.kind in provider.handles)
+    lines = [f"Up to {sum(counts.values())} Reputation Lookups (fewer if answers are cached):"]
+    rates = {provider.name: provider.lookups_per_minute for provider in providers}
+    lines += [f"  {name}: up to {count}{_how_long(count, rates[name])}" for name, count in counts.items()]
+    return "\n".join(lines)
+
+
+def _how_long(lookups: int, lookups_per_minute: int | None) -> str:
+    """The shortest time a rate limit lets `lookups` lookups take, or "" if it has no limit.
+
+    The first lookup needs no wait; each later one waits a gap, with the
+    core's safety margin.
+    """
+    if not lookups_per_minute or lookups < 2:
+        return ""
+    seconds = (lookups - 1) * 60 / lookups_per_minute * SAFETY_MARGIN
+    duration = f"{seconds:.0f} seconds" if seconds < 120 else f"{seconds / 60:.0f} minutes"
+    return f" (at most {lookups_per_minute} a minute, so at least {duration})"
 
 
 def _pick(paths: list[Path], size: int | None, seed: int) -> list[Path]:
