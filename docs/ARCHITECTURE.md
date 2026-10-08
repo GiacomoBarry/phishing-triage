@@ -101,6 +101,34 @@ Step by step:
 | `core/errors.py` | Errors the core can raise to its caller: `UnparseableEmailError` and `NoAttachedEmailError`. |
 | `cli.py` | The terminal front end: arguments (including `--inner`, and the hint to use it), printing (including the Authentication Results, the Received chain and the Claimed Origin with its verified or unverified label), saving and exit codes. |
 
+## The Offline Evaluation
+
+A second command, `phishing-triage-evaluate` (`evaluation.py`), measures how well the rules do on emails whose answer is already known. Like the CLI, it sits outside the core and only calls `triage()`.
+
+```mermaid
+flowchart LR
+    download["scripts/download_datasets.py<br/>(run by hand)"] -->|"phishing_pot emails"| phish["samples/phish/"]
+    download -->|"SpamAssassin ham"| ham["samples/ham/"]
+    phish --> evaluation["evaluation.py<br/>phishing-triage-evaluate"]
+    ham --> evaluation
+    toml["settings.toml<br/>or --settings copy"] --> evaluation
+    evaluation -->|"each sample's bytes, Settings,<br/>no Providers"| core["Core: triage()"]
+    core -->|"Triage Report<br/>(verdict_before_cap, score, findings)"| evaluation
+    evaluation -->|"counts table, false-positive and<br/>missed-phish rates, --list lines"| terminal["Terminal"]
+```
+
+1. `scripts/download_datasets.py` downloads phishing_pot (phish) and SpamAssassin easy and hard ham into the git-ignored `samples/` folder, one subfolder per dataset. The folder an email is in is its label.
+2. `phishing-triage-evaluate` checks `samples/phish/` and `samples/ham/` exist (exit code 3 if not) and loads the settings (exit code 7 if invalid).
+3. Each non-hidden file is triaged with an empty list of Providers, so nothing touches the network. A sample that can't be read, isn't an email, or makes the core fail is recorded as unparseable with the reason, and the run carries on.
+4. For the rest, it keeps `verdict_before_cap` from the Triage Report: with no Providers everything is Not Checked, so the capped Verdict would never be clean ([ADR 0015](adr/0015-offline-evaluation-counts-the-verdict-before-the-cap.md)).
+5. It prints, per label, how many samples got each Verdict and how many were unparseable, then the **False-Positive Rate** and **Missed-Phish Rate**. With `--list`, each sample's label, Verdict, Score, path and fired rules come first.
+
+| File | What it does |
+|---|---|
+| `evaluation.py` | The `phishing-triage-evaluate` command: finds the samples, triages each offline, counts the Verdicts and works out the two rates. `main()` takes `rules` like `triage()` does, so tests can pass a rule that fails on purpose. |
+| `scripts/download_datasets.py` | Downloads the datasets. It reads each archive and writes each email under its plain file name, so a crafted archive can't write outside its folder. Not run by tests. |
+| `tests/fixtures/evaluation/` | A tiny hand-made samples folder (five phish, one of them not an email, and three ham) whose Verdicts were worked out by hand, used by `tests/test_evaluation.py`. |
+
 ## What comes next
 
-A later ticket adds an evaluation against public datasets.
+A later ticket adds a live evaluation: a small sample run with the real Providers.

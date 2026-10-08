@@ -99,3 +99,12 @@ Programming concepts this project uses, one line each, with where they appear.
 - **Regular expression over bytes**: a pattern written as `rb"..."` searches raw bytes without decoding them, used to split a multipart email on its boundary lines (`_split_multipart` in `core/attachments.py`).
 - **Public function over a private recursive helper**: callers see a simple signature, and the extra argument the recursion needs stays hidden (`attachment_parts()` and `_attachment_parts()` in `core/attachments.py`).
 - **Keyword argument with a default**: an optional switch that leaves existing callers unchanged (`inner: bool = False` on `triage()` in `core/triage.py`, set by `--inner` in `cli.py`).
+- **Two console scripts in one package**: `[project.scripts]` can list several commands; `phishing-triage-evaluate` runs `main()` in `evaluation.py` alongside the main CLI (`pyproject.toml`).
+- **Optional positional argument (`nargs="?"`)**: an argument you may leave out, falling back to a default, so `phishing-triage-evaluate` on its own means `samples/` (`_parse_args` in `evaluation.py`).
+- **Walking a folder tree (`Path.rglob`)**: finds every file under a folder, however deep, here every sample under `phish/` and `ham/` (`_samples` in `evaluation.py`).
+- **Passing a function as an argument (`lambda`)**: a tiny unnamed function says what counts as a mistake, so one function works out both rates (`_rate_line` in `evaluation.py`).
+- **Format specs (`:.1%`, `:>13`)**: inside an f-string, `:.1%` turns 0.25 into `25.0%` and `:>13` right-aligns text in 13 characters, which lines up the table (`_rate_line` and `_table_line` in `evaluation.py`).
+- **Catch, record and carry on (batch processing)**: when processing thousands of items, one bad item is recorded with its reason instead of stopping the run (`_evaluate_sample` in `evaluation.py`).
+- **Temporary folder (`tempfile.TemporaryDirectory`)**: a `with` block that gives you an empty folder and deletes it afterwards, here for each downloaded archive (`main` in `scripts/download_datasets.py`).
+- **Reading archives safely (avoiding "zip slip")**: a crafted archive can name a file `../../somewhere`, so each email is read from the archive and written under its plain file name only, never extracted with the archive's own paths (`_emails_in` in `scripts/download_datasets.py`).
+- **Streaming a download (`shutil.copyfileobj`)**: copies the response to disk in chunks, so a 1 GB download never has to fit in memory (`_download` in `scripts/download_datasets.py`).

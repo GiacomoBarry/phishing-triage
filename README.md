@@ -10,7 +10,7 @@ It is also a learning and portfolio project on the path from service desk to SOC
 
 ## Status
 
-Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. It pulls every link out of the email as an **Observable**, decoding obfuscated ones (defanged text, HTML entities, SafeLinks and Google redirect wrappers) as text, without ever visiting them. Each attachment is listed with its type, size and SHA-256, MD5 and SHA-1 hashes, worked out in memory without ever opening, unpacking or saving the file. So far there are ten rules: SPF, DKIM and DMARC fails and a high Abuse Confidence on the Claimed Origin (described below), **Urgency Phrases** such as "verify your account" or "within 24 hours" in the subject or body, a Reply-To on a different domain from the sender, a display name claiming a well-known brand, a sender or link domain imitating one, links through a URL shortener, and dangerous-looking attachments (risky or double extensions, hidden characters in the name, archives and password-protected ZIPs). Links and domains are looked up on **URLhaus**: a listed URL is a Decisive Finding, and a domain hosting listed URLs adds points ([ADR 0005](docs/adr/0005-urlhaus-domain-listings-are-not-decisive.md)). Links, domains and attachment hashes are also looked up on **VirusTotal**: 3 or more Engines flagging a link or attachment as malicious is a Decisive Finding, and 1 or 2 adds points. A flagged domain only ever adds points, because shared platforms collect detections too ([ADR 0007](docs/adr/0007-virustotal-domain-detections-are-not-decisive.md)). Not listed or never seen means **Unknown**, never clean ([ADR 0006](docs/adr/0006-virustotal-clean-needs-an-engine-to-vouch.md)). The sender's domain and every link domain are looked up with **RDAP** (asking the domain's registry, never the domain): one registered in the last 30 days adds points, and a registry that hides the date gives "unknown age", which never counts as old ([ADR 0010](docs/adr/0010-rdap-gives-facts-and-sender-domains-are-observables.md)). The tool also reads the **Authentication Results** the receiving server recorded (SPF, DKIM and DMARC, never re-checked): a recorded fail adds points (DMARC 20, SPF 10, DKIM 10), and a missing result is "not recorded", never a fail. It shows the Received chain hop by hop and the **Claimed Origin**, the IP the email appears to come from, labelled unverified unless one of your **Trusted Relays** recorded it ([ADR 0011](docs/adr/0011-trust-only-headers-added-after-the-email-reached-us.md)). The Claimed Origin is looked up on **AbuseIPDB**, and nothing else about the email is sent there. An **Abuse Confidence** of 75% or more adds 15 points, and the Finding says whether the IP could have been forged ([ADR 0012](docs/adr/0012-abuseipdb-reports-the-abuse-confidence-and-the-rule-applies-the-threshold.md)). See `.scratch/phase-1-email-triage/` for the spec and tickets.
+Phase 1 is in progress. The tool parses an email, applies its red-flag rules to produce **Findings**, adds up their points into a **Score**, turns that into a **Verdict**, saves the Triage Report and prints the result. It pulls every link out of the email as an **Observable**, decoding obfuscated ones (defanged text, HTML entities, SafeLinks and Google redirect wrappers) as text, without ever visiting them. Each attachment is listed with its type, size and SHA-256, MD5 and SHA-1 hashes, worked out in memory without ever opening, unpacking or saving the file. So far there are ten rules: SPF, DKIM and DMARC fails and a high Abuse Confidence on the Claimed Origin (described below), **Urgency Phrases** such as "verify your account" or "within 24 hours" in the subject or body, a Reply-To on a different domain from the sender, a display name claiming a well-known brand, a sender or link domain imitating one, links through a URL shortener, and dangerous-looking attachments (risky or double extensions, hidden characters in the name, archives and password-protected ZIPs). Links and domains are looked up on **URLhaus**: a listed URL is a Decisive Finding, and a domain hosting listed URLs adds points ([ADR 0005](docs/adr/0005-urlhaus-domain-listings-are-not-decisive.md)). Links, domains and attachment hashes are also looked up on **VirusTotal**: 3 or more Engines flagging a link or attachment as malicious is a Decisive Finding, and 1 or 2 adds points. A flagged domain only ever adds points, because shared platforms collect detections too ([ADR 0007](docs/adr/0007-virustotal-domain-detections-are-not-decisive.md)). Not listed or never seen means **Unknown**, never clean ([ADR 0006](docs/adr/0006-virustotal-clean-needs-an-engine-to-vouch.md)). The sender's domain and every link domain are looked up with **RDAP** (asking the domain's registry, never the domain): one registered in the last 30 days adds points, and a registry that hides the date gives "unknown age", which never counts as old ([ADR 0010](docs/adr/0010-rdap-gives-facts-and-sender-domains-are-observables.md)). The tool also reads the **Authentication Results** the receiving server recorded (SPF, DKIM and DMARC, never re-checked): a recorded fail adds points (DMARC 20, SPF 10, DKIM 10), and a missing result is "not recorded", never a fail. It shows the Received chain hop by hop and the **Claimed Origin**, the IP the email appears to come from, labelled unverified unless one of your **Trusted Relays** recorded it ([ADR 0011](docs/adr/0011-trust-only-headers-added-after-the-email-reached-us.md)). The Claimed Origin is looked up on **AbuseIPDB**, and nothing else about the email is sent there. An **Abuse Confidence** of 75% or more adds 15 points, and the Finding says whether the IP could have been forged ([ADR 0012](docs/adr/0012-abuseipdb-reports-the-abuse-confidence-and-the-rule-applies-the-threshold.md)). An **Offline Evaluation** runs the rules over public phishing and legitimate-email datasets and reports the false-positive and missed-phish rates (see "Evaluating the rules against public datasets" below). See `.scratch/phase-1-email-triage/` for the spec and tickets.
 
 ## Getting started
 
@@ -144,6 +144,75 @@ Scripts can react to the Verdict without reading any text:
 | 8 | `--inner` was given, but the email has no email attached |
 
 Code 2 always means malicious, so bad usage gets 5 instead of the usual 2.
+
+## Evaluating the rules against public datasets
+
+To see how often the rules get things wrong, run them over thousands of emails whose answer is already known: **Phish** from [phishing_pot](https://github.com/rf-peixoto/phishing_pot) and **Ham** (legitimate email) from the [SpamAssassin public corpus](https://spamassassin.apache.org/old/publiccorpus/). Rerun it after changing any rule or weight, to catch false positives early.
+
+### 1. Download the datasets
+
+```sh
+uv run python scripts/download_datasets.py
+```
+
+This fills the `samples/` folder:
+
+```
+samples/
+  phish/phishing_pot/              over 12,000 phishing emails (a 1 GB download, so it takes a while)
+  ham/spamassassin_easy_ham/       about 2,500 everyday legitimate emails
+  ham/spamassassin_hard_ham/       about 250 legitimate emails that look like marketing or spam
+```
+
+`samples/` is git-ignored and must stay that way: the raw emails contain real people's addresses. Rerunning the script empties and refills each dataset's folder. You can add your own samples too: any file under `samples/phish/` counts as phish and any file under `samples/ham/` as ham (hidden files such as `.DS_Store` are skipped).
+
+### 2. Run the Offline Evaluation
+
+```sh
+uv run phishing-triage-evaluate                              # evaluate samples/
+uv run phishing-triage-evaluate --list                       # also list each sample's Verdict, Score and Findings
+uv run phishing-triage-evaluate --settings my-settings.toml  # try out tuned weights
+uv run phishing-triage-evaluate path/to/other-folder         # any folder with phish/ and ham/ inside
+```
+
+It prints a table like this (from the small test folder in `tests/fixtures/evaluation/`):
+
+```
+Label         clean   suspicious    malicious  unparseable        total
+phish             1            1            2            1            5
+ham               2            1            0            0            3
+
+False-positive rate (ham not clean): 33.3% (1 of 3 ham)
+Missed-phish rate (phish clean): 25.0% (1 of 4 phish)
+```
+
+- The **False-Positive Rate** is the share of ham that wasn't called clean: legitimate email an analyst would waste time on.
+- The **Missed-Phish Rate** is the share of phish called clean: the dangerous mistake.
+- **Unparseable** samples (not an email, unreadable, or one the tool failed on) are counted and skipped, never fatal, and left out of both rates. `--list` shows why each one failed.
+
+It is **offline**: no Providers are asked, so nothing touches the network and no API keys are needed. That means every URL and attachment is Not Checked, which would normally raise every clean Verdict to suspicious (see "Clean requires evidence" above). So the evaluation counts the Verdict from *before* that cap, which measures the rules and weights on their own ([ADR 0015](docs/adr/0015-offline-evaluation-counts-the-verdict-before-the-cap.md)). With real lookups, some missed phish would be caught.
+
+To investigate mistakes, list everything and filter it, for example the ham that wasn't clean:
+
+```sh
+uv run phishing-triage-evaluate --list | grep -E '^ham +(suspicious|malicious)'
+```
+
+Each line shows the label, Verdict, Score, file and which rules fired, so you can open the email and see why. A full run over the datasets takes several minutes.
+
+### Baseline
+
+The first run, with the default settings, on 8 October 2026 (12,271 phish, 2,750 ham):
+
+| | clean | suspicious | malicious | unparseable |
+|---|---|---|---|---|
+| phish | 11,382 | 870 | 18 | 1 |
+| ham | 2,741 | 9 | 0 | 0 |
+
+- False-positive rate: **0.3%** (9 of 2,750 ham).
+- Missed-phish rate: **92.8%** (11,382 of 12,270 phish).
+
+So the rules on their own almost never accuse a legitimate email, but miss most phish. Over half of the missed phish (6,463) did trip at least one rule, just not enough points to reach 30, and the links the Providers would catch aren't looked up offline. Tuning the weights against these numbers, and recording the before and after, is the next step.
 
 ## Running the tests
 

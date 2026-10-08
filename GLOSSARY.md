@@ -127,3 +127,25 @@ _Avoid_: Summary, ticket note, case note
 **Recommended Action**:
 A standard next step suggested in an Incident Note for a human to carry out, such as blocking a sender domain. The tool never performs it.
 _Avoid_: Response, remediation, playbook step
+
+### Evaluation
+
+**Phish**:
+A sample known to be a phishing email, kept under `samples/phish/` (from the phishing_pot dataset).
+_Avoid_: Spam, malicious sample, positive
+
+**Ham**:
+A sample known to be legitimate email, kept under `samples/ham/` (from the SpamAssassin ham corpora). The usual name in spam filtering for "not spam".
+_Avoid_: Clean email (clean is a Verdict), benign, negative
+
+**Offline Evaluation**:
+Running the rules over every Phish and Ham sample with no Providers, and counting the Verdict each gets from before the clean-requires-evidence cap (ADR 0015). It measures the rules and weights alone.
+_Avoid_: Benchmark, test run, live evaluation (that one asks the real Providers)
+
+**False-Positive Rate**:
+The share of triaged Ham whose Verdict isn't clean: legitimate email an analyst would waste time on.
+_Avoid_: Error rate, FP (spell it out)
+
+**Missed-Phish Rate**:
+The share of triaged Phish whose Verdict is clean: the dangerous mistake.
+_Avoid_: False-negative rate, miss rate, detection rate (its opposite)
