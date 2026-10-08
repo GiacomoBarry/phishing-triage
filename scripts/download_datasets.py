@@ -69,10 +69,7 @@ def main() -> int:
             if folder.exists():
                 shutil.rmtree(folder)
             folder.mkdir(parents=True)
-            count = 0
-            for file_name, content in _emails_in(archive):
-                (folder / file_name).write_bytes(content)
-                count += 1
+            count = _save_emails(archive, folder)
         print(f"  saved {count} emails to {folder}")
     print(f"Done. Run: uv run phishing-triage-evaluate {SAMPLES}")
     return 0
@@ -82,6 +79,19 @@ def _download(url: str, destination: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=60) as response, destination.open("wb") as out:
         shutil.copyfileobj(response, out)
+
+
+def _save_emails(archive: Path, folder: Path) -> int:
+    """Write each email in `archive` straight into `folder`, and return how many.
+
+    Only the plain file name is used, so a member called "../../x" lands as
+    `folder/x`: a crafted archive can't write anywhere else.
+    """
+    count = 0
+    for file_name, content in _emails_in(archive):
+        (folder / file_name).write_bytes(content)
+        count += 1
+    return count
 
 
 def _emails_in(archive: Path) -> Iterator[tuple[str, bytes]]:
