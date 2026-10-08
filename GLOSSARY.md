@@ -143,7 +143,7 @@ Running the rules over every Phish and Ham sample with no Providers, and countin
 _Avoid_: Benchmark, test run, Live Evaluation (that one asks the real Providers)
 
 **Live Evaluation**:
-Running the evaluation over a small, reproducible sample of Phish and Ham with the real Providers, counting each sample's final Verdict (after the clean-requires-evidence cap) and how many Observables were Not Checked, next to the Offline Evaluation's counts for the same sample (ADR 0016). It shows what Reputation Lookups change.
+Running the evaluation over a small, reproducible sample of Phish and Ham with the real Providers, counting each sample's final Verdict (after the clean-requires-evidence cap) and how many Observables were Not Checked. To show what Reputation Lookups change, it also counts the Verdicts from before the cap, live and offline, for the same sample, so the comparison is like-for-like (ADR 0016).
 _Avoid_: Online evaluation, full evaluation (it only takes a sample)
 
 **Sample Size**:

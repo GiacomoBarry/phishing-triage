@@ -213,13 +213,19 @@ uv run phishing-triage-evaluate --live --sample 5   # a smaller sample, for fewe
 uv run phishing-triage-evaluate --live --list       # also list each sample
 ```
 
-- It uses the API keys in `.env`, like the main CLI. A Provider with no key answers Not Checked, which can stop an email being called clean.
+- It uses the API keys in `.env`, like the main CLI. A Provider with no key answers Not Checked, which can stop an email being called clean, so the run starts by warning (on stderr) which Providers have no key. It names the variable to set, never a key's value.
 - **Before any lookup**, it prints on stderr the most lookups it could make for each Provider, and how long the rate limits make that take (VirusTotal's free tier allows 4 a minute and 500 a day). Press Ctrl-C if that's too many, and pick a smaller `--sample`.
 - It keeps to each Provider's rate limit across the whole run, not just within one email, and once a Provider says to stop asking (a rejected key, a used-up quota) it isn't asked again in that run.
 - It uses the same cache as the CLI (`.cache/lookups.json`), so a rerun of the same sample is fast and asks almost nothing again.
 - The sample is the same every time for the same `--sample` and `--seed`, so a live run can be compared with an offline one: `uv run phishing-triage-evaluate --sample 20` gives the offline numbers for exactly the same emails.
 
-It prints the same table and rates, but counts the **final** Verdicts (after the clean-requires-evidence cap), as an analyst would see them, then how many Observables were Not Checked, then the offline table for the same samples for comparison ([ADR 0016](docs/adr/0016-live-evaluation-paces-providers-across-the-whole-run.md)). Live numbers change as blocklists change, so treat them as a snapshot.
+It prints three tables, each with its rates ([ADR 0016](docs/adr/0016-live-evaluation-paces-providers-across-the-whole-run.md)):
+
+1. **Live, final Verdicts** (after the clean-requires-evidence cap), as an analyst would see them, then how many Observables were Not Checked.
+2. **Live, before the cap**: what the rules decided, with the lookups' Findings.
+3. **Offline, before the cap**: what the rules alone decided, for the same samples.
+
+Compare tables 2 and 3 to see what the lookups changed: both are from before the cap, so it's like-for-like. Offline, every link is Not Checked, so offline counts are always from before the cap; comparing them with table 1 would blame the lookups for what the cap did (a ham email whose link nobody checked is raised to suspicious by the cap, not by a lookup). The difference between tables 1 and 2 is the cap's doing. Live numbers change as blocklists change, so treat them as a snapshot.
 
 ### Baseline (a dated snapshot)
 

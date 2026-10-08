@@ -18,7 +18,7 @@ Why split them? A later phase will add a web-based alert queue, and it can reuse
 flowchart LR
     toml["settings.toml<br/>or --settings copy"] -->|"load_settings()<br/>config.py"| cli
     file[".eml file"] -->|read bytes| cli["CLI<br/>cli.py"]
-    env[".env API keys<br/>(RDAP needs none)"] -->|"build_providers()"| providers["Providers<br/>providers/urlhaus.py<br/>providers/virustotal.py<br/>providers/rdap.py<br/>providers/abuseipdb.py"]
+    env[".env API keys<br/>(RDAP needs none)"] -->|"real_providers()"| providers["Providers<br/>providers/urlhaus.py<br/>providers/virustotal.py<br/>providers/rdap.py<br/>providers/abuseipdb.py"]
     providers --> cli
     providers <-.->|"lookup endpoints only (ADR 0001)"| internet["URLhaus API<br/>VirusTotal API<br/>RDAP registries<br/>AbuseIPDB API"]
     cli -->|"raw bytes, Settings, Providers, cache"| core
@@ -90,17 +90,17 @@ Step by step:
 | `cache_file.py` | Outside the core: the real cache, a JSON file in `.cache/`, written safely via a temporary file. A damaged file counts as empty, entries over 7 days old are dropped, and a failed save only gives a warning. `WriteOnlyCache` wraps it for `--no-cache`. |
 | `config.py` | Outside the core: reads a settings file, checks it against the shipped one and builds the `Settings`. |
 | `core/providers.py` | The shape every **Provider** shares: a name, the Observable kinds it handles, its rate limit (`lookups_per_minute`), and `lookup()`, which returns a `Lookup` (an `Outcome` with a detail, raw evidence, and `stop_asking` when it can't answer anything else). There is deliberately no way to submit or scan ([ADR 0001](adr/0001-reputation-lookups-only.md)). |
-| `core/lookups.py` | Runs the Reputation Lookups: sender and link domains first, the URL cap, waiting for rate limits, not asking a Provider again once it says to stop, and progress events (`LookupStarted`, `WaitingForRateLimit`, `ProviderStopped`). Each Provider's pacing and stop state live in one `_ProviderTurns` object. Turns any Provider failure into Not Checked, and works out which Observables no Provider answered for. |
+| `core/lookups.py` | Runs the Reputation Lookups: sender and link domains first, the URL cap, waiting for rate limits, not asking a Provider again once it says to stop, and progress events (`LookupStarted`, `WaitingForRateLimit`, `ProviderStopped`). Each Provider's pacing and stop state live in one `ProviderTurns` object (public, so the Live Evaluation can keep one for a whole run). `over_lookup_cap()` says which URLs are over the Lookup Cap, for the core and the lookup estimate alike. Turns any Provider failure into Not Checked, and works out which Observables no Provider answered for. |
 | `core/clock.py` | Telling the time and waiting, behind a `Clock` interface, so tests can pass a fake clock that never really waits. |
 | `providers/transport.py` | Outside the core: sends HTTP requests (POST for URLhaus, GET for VirusTotal) with Python's `urllib`, behind a `Transport` interface that tests replace with a fake. |
 | `providers/urlhaus.py` | Outside the core: the URLhaus Provider. Looks up URLs (listed means malicious) and domains (listed means suspicious, [ADR 0005](adr/0005-urlhaus-domain-listings-are-not-decisive.md)); not listed is Unknown. |
 | `providers/virustotal.py` | Outside the core: the VirusTotal Provider. Looks URLs, domains and attachment hashes up with GET requests only (its POST endpoints would submit for scanning). At or above the decisive Engine count is malicious (never for a domain), fewer detections are suspicious, never seen is Unknown, and a URL or domain no Engine vouches for is Unknown rather than clean ([ADR 0006](adr/0006-virustotal-clean-needs-an-engine-to-vouch.md)). |
 | `providers/rdap.py` | Outside the core: the RDAP Provider. Finds the domain's registry from IANA's bootstrap list (fetched once per run), asks it when the domain was registered, and trims subdomains until the registry recognises one. Its outcome is always Unknown, with the date (or `None` for unknown age) in the evidence ([ADR 0010](adr/0010-rdap-gives-facts-and-sender-domains-are-observables.md)). |
 | `providers/abuseipdb.py` | Outside the core: the AbuseIPDB Provider. Looks the Claimed Origin's IP up with a GET request only (its POST endpoint reports an IP). No recent reports is Unknown, AbuseIPDB's allowlist is clean, and any Abuse Confidence above 0 is suspicious, with it in the evidence for the rule to judge ([ADR 0012](adr/0012-abuseipdb-reports-the-abuse-confidence-and-the-rule-applies-the-threshold.md)). |
-| `providers/__init__.py` | Outside the core: `build_providers()` builds every real Provider from the API keys in the environment. |
+| `providers/__init__.py` | Outside the core: `real_providers()` reads `.env` and builds every real Provider with `build_providers()`, for both commands. `missing_api_keys()` names the Providers with no key (never the keys themselves). |
 | `core/errors.py` | Errors the core can raise to its caller: `UnparseableEmailError` and `NoAttachedEmailError`. |
 | `cli.py` | The terminal front end: arguments (including `--inner`, and the hint to use it), printing (including the Authentication Results, the Received chain and the Claimed Origin with its verified or unverified label), saving and exit codes. |
-| `command_line.py` | What both commands share: the `ExitCode` numbers, an argument parser that exits with 5 (not argparse's 2, which would mean malicious) on bad usage, and `print_error`. One definition, so the two commands can't give a number different meanings. |
+| `command_line.py` | What both commands share: the `ExitCode` numbers, an argument parser that exits with 5 (not argparse's 2, which would mean malicious) on bad usage, `print_error`, and `show_progress`, which prints the core's progress events on stderr. One definition, so the two commands can't give a number different meanings, and a wait reads the same in both. |
 
 ## The Offline Evaluation
 
@@ -138,26 +138,28 @@ flowchart LR
 flowchart LR
     samples["samples/phish/ and samples/ham/"] -->|"--sample N, --seed:<br/>a seeded random pick"| evaluation["evaluation.py<br/>--live"]
     evaluation -->|"1. offline pass:<br/>no Providers"| core["Core: triage()"]
-    core -->|"Observables, offline Verdicts"| evaluation
+    core -->|"Observables, offline Verdicts before the cap"| evaluation
     evaluation -->|"2. lookup estimate<br/>(before any lookup)"| stderr["Terminal (stderr)"]
-    env[".env API keys"] -->|"build_providers()"| providers["Real Providers"]
-    providers --> pacing["RunWidePacing<br/>run_wide_pacing.py<br/>(one per Provider, for the whole run)"]
+    env[".env API keys"] -->|"real_providers()"| providers["Real Providers"]
+    env -.->|"missing keys named"| stderr
+    providers --> pacing["RunWidePacing<br/>run_wide_pacing.py<br/>(one ProviderTurns per Provider, for the whole run)"]
+    pacing -.->|"waits, stops (on_progress)"| stderr
     pacing -->|"3. live pass:<br/>paced Providers, clock, cache"| core
     cachefile[".cache/lookups.json"] <-.->|"get / put"| core
-    core -->|"final Verdicts,<br/>Not Checked Observables"| evaluation
-    evaluation -->|"live table, Not Checked count, rates,<br/>then the offline table to compare"| terminal["Terminal (stdout)"]
+    core -->|"final Verdicts, Verdicts before the cap,<br/>Not Checked Observables"| evaluation
+    evaluation -->|"live final table, Not Checked count,<br/>then live and offline tables before the cap"| terminal["Terminal (stdout)"]
 ```
 
 1. It picks `--sample N` phish and N ham (20 by default) with a seeded random generator, so the same folder and `--seed` always give the same emails. Offline runs accept `--sample` too, for comparing on the same emails.
-2. It triages the sample offline first. That finds each email's Observables, so before any lookup it can warn, on stderr, the most lookups each Provider could get (URLs over the Lookup Cap left out) and how long its rate limit makes that take.
-3. It wraps each Provider in `RunWidePacing`, which keeps to the Provider's rate limit across every email in the run (the core only paces within one Triage) and stops asking a Provider for the rest of the run once it says to stop. The wrapper tells the core it has no limit, so the waiting happens once, in the wrapper.
-4. It triages the sample again with the wrapped Providers, the clock and the CLI's cache (`JsonFileCache`), and keeps each final Verdict (after the cap) and how many Observables were Not Checked.
-5. It prints the live table, the Not Checked count and the rates, then the offline table and rates for the same sample.
+2. It triages the sample offline first (its progress line says it is reading the samples to estimate the lookups). That finds each email's Observables, so before any lookup it can warn, on stderr, which real Providers have no API key, and the most lookups each Provider could get (URLs over the Lookup Cap left out, using the core's `over_lookup_cap()`) and how long its rate limit makes that take.
+3. It wraps each Provider in `RunWidePacing`, which keeps the core's own `ProviderTurns` for the whole run, so it keeps to the Provider's rate limit across every email (the core only paces within one Triage) and stops asking a Provider for the rest of the run once it says to stop. The wrapper tells the core it has no limit, so the waiting happens once, in the wrapper. Like the core, it never prints: it reports waits and stops through `on_progress`, and the evaluation shows them with the CLI's `show_progress`.
+4. It triages the sample again with the wrapped Providers, the clock and the CLI's cache (`JsonFileCache`), and keeps each sample's final Verdict, its Verdict before the cap, and how many Observables were Not Checked. The two passes differ only in the triage function each hands to `_evaluate_sample`.
+5. It prints the live table of final Verdicts with its rates and the Not Checked count. Then, to compare like-for-like, the live and the offline tables of Verdicts before the cap: offline, every link is Not Checked, so the offline counts are always from before the cap, and comparing them with the final live counts would blame the lookups for what the cap did.
 
 | File | What it does |
 |---|---|
 | `evaluation.py` | With `--live`: picks the sample, warns about the lookups, runs both passes and prints both tables. `main()` takes `providers` and `clock`, so tests pass fake Providers and a fake clock. |
-| `run_wide_pacing.py` | `RunWidePacing`: a Provider wrapper that remembers the last lookup and any "stop asking" answer for the whole run, not just one Triage. |
+| `run_wide_pacing.py` | `RunWidePacing`: a Provider wrapper that keeps one `ProviderTurns` (the last lookup and any "stop asking" answer) for the whole run, not just one Triage, and reports waits and stops through `on_progress`. |
 
 ## What comes next
 

@@ -9,9 +9,10 @@ many ham emails got each Verdict, to catch false positives early (ADR 0015).
 
 With --live, a small reproducible sample is triaged with the real Providers
 instead, keeping to their rate limits across the whole run and using the
-reputation cache. It warns how many lookups it will make first, counts the
-final Verdicts and the Not Checked Observables, and prints the offline counts
-for the same sample to compare (ADR 0016).
+reputation cache. It warns which Providers have no API key and how many
+lookups it will make first, counts the final Verdicts and the Not Checked
+Observables, then, to compare like-for-like, the live and the offline
+Verdicts from before the cap for the same sample (ADR 0016).
 
 Like the CLI, this lives outside the core: it reads files and prints.
 """
