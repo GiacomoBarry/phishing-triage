@@ -49,9 +49,9 @@ def test_prints_verdict_counts_for_phish_and_for_ham(capsys: pytest.CaptureFixtu
     output = capsys.readouterr().out
     assert exit_code == 0
     header = next(line.split() for line in output.splitlines() if line.split()[:1] == ["Label"])
-    assert header == ["Label", "clean", "suspicious", "malicious", "unparseable", "total"]
-    assert row(output, "phish") == ["phish", "1", "1", "2", "1", "5"]
-    assert row(output, "ham") == ["ham", "2", "1", "0", "0", "3"]
+    assert header == ["Label", "clean", "suspicious", "malicious", "unparseable", "error", "total"]
+    assert row(output, "phish") == ["phish", "1", "1", "2", "1", "0", "5"]
+    assert row(output, "ham") == ["ham", "2", "1", "0", "0", "0", "3"]
 
 
 def test_prints_false_positive_and_missed_phish_rates(capsys: pytest.CaptureFixture[str]) -> None:
@@ -79,7 +79,7 @@ def test_list_shows_each_samples_verdict_score_and_findings(capsys: pytest.Captu
     assert "dmarc_fail" in false_positive and "reply_to_mismatch" in false_positive
     assert listed(output, "phish/invoice_link.eml").split()[:3] == ["phish", "clean", "0"]
     # The counts are still printed after the list.
-    assert row(output, "ham") == ["ham", "2", "1", "0", "0", "3"]
+    assert row(output, "ham") == ["ham", "2", "1", "0", "0", "0", "3"]
 
 
 def test_list_shows_why_a_sample_was_unparseable(capsys: pytest.CaptureFixture[str]) -> None:
@@ -122,6 +122,16 @@ def test_a_missing_label_folder_is_an_error(tmp_path: Path, capsys: pytest.Captu
     assert "ham" in capsys.readouterr().err
 
 
+def test_bad_usage_exits_with_the_clis_usage_error_code(capsys: pytest.CaptureFixture[str]) -> None:
+    # argparse would exit with 2, which from the main CLI means "malicious".
+    # Both commands use 5 for bad usage, so a script can't confuse the two.
+    with pytest.raises(SystemExit) as exit_info:
+        main([str(SAMPLES), "--no-such-option"])
+
+    assert exit_info.value.code == 5
+    assert "--no-such-option" in capsys.readouterr().err
+
+
 def edited_settings(tmp_path: Path, old: str, new: str) -> str:
     """A copy of the shipped settings with one line changed, as the maintainer tuning weights would make."""
     shipped = (Path(__file__).parent.parent / "src" / "phishing_triage" / "settings.toml").read_text()
@@ -141,8 +151,8 @@ def test_uses_an_edited_settings_file_to_tune_the_weights(
     main([str(SAMPLES), "--settings", settings])
 
     output = capsys.readouterr().out
-    assert row(output, "ham") == ["ham", "3", "0", "0", "0", "3"]
-    assert row(output, "phish") == ["phish", "2", "0", "2", "1", "5"]
+    assert row(output, "ham") == ["ham", "3", "0", "0", "0", "0", "3"]
+    assert row(output, "phish") == ["phish", "2", "0", "2", "1", "0", "5"]
 
 
 def test_an_invalid_settings_file_is_an_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -162,7 +172,10 @@ def samples_folder(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_an_unreadable_sample_is_counted_and_skipped(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_an_unreadable_sample_is_counted_as_an_error_and_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A file that can't be read says nothing about the email in it, so it isn't unparseable.
     samples = samples_folder(tmp_path)
     locked = samples / "ham" / "locked.eml"
     locked.write_bytes((SAMPLES / "ham" / "monthly_update.eml").read_bytes())
@@ -172,15 +185,18 @@ def test_an_unreadable_sample_is_counted_and_skipped(tmp_path: Path, capsys: pyt
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert row(output, "ham") == ["ham", "1", "0", "0", "1", "2"]
-    assert "could not be read" in listed(output, "ham/locked.eml")
+    assert row(output, "ham") == ["ham", "1", "0", "0", "0", "1", "2"]
+    line = listed(output, "ham/locked.eml")
+    assert line.split()[:2] == ["ham", "error"]
+    assert "could not be read" in line
 
 
-def test_a_sample_the_core_fails_on_is_counted_and_skipped(
+def test_a_sample_the_core_fails_on_is_counted_as_an_error_and_skipped(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Real datasets hold odd emails. One that trips up the core mustn't stop a run
-    # over thousands, but the failure is shown so the bug can be fixed.
+    # over thousands, but it is counted apart from unparseable samples, so a bug
+    # in a rule can't hide among emails that simply aren't emails.
     def broken_rule(rule_input: RuleInput, settings: Settings) -> list[Finding]:
         if "bank details" in str(rule_input.message["Subject"]):
             raise ValueError("odd header")
@@ -190,9 +206,13 @@ def test_a_sample_the_core_fails_on_is_counted_and_skipped(
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert row(output, "phish") == ["phish", "0", "0", "0", "1", "1"]
-    assert row(output, "ham") == ["ham", "1", "0", "0", "0", "1"]
-    assert "the core failed (ValueError: odd header)" in listed(output, "phish/payroll_reply_to.eml")
+    assert row(output, "phish") == ["phish", "0", "0", "0", "0", "1", "1"]
+    assert row(output, "ham") == ["ham", "1", "0", "0", "0", "0", "1"]
+    line = listed(output, "phish/payroll_reply_to.eml")
+    assert line.split()[:2] == ["phish", "error"]
+    assert "the core failed (ValueError: odd header)" in line
+    # Like unparseable samples, errors have no Verdict, so they are left out of the rates.
+    assert "Missed-phish rate (phish clean): no phish samples were triaged" in output
 
 
 def test_hidden_files_such_as_ds_store_are_not_samples(
@@ -203,7 +223,7 @@ def test_hidden_files_such_as_ds_store_are_not_samples(
 
     main([str(samples)])
 
-    assert row(capsys.readouterr().out, "ham") == ["ham", "1", "0", "0", "0", "1"]
+    assert row(capsys.readouterr().out, "ham") == ["ham", "1", "0", "0", "0", "0", "1"]
 
 
 def test_says_it_is_offline_and_counts_verdicts_before_the_cap(capsys: pytest.CaptureFixture[str]) -> None:
@@ -230,4 +250,4 @@ def test_evaluates_the_samples_folder_in_the_current_folder_by_default(
     exit_code = main([])
 
     assert exit_code == 0
-    assert row(capsys.readouterr().out, "phish") == ["phish", "0", "1", "0", "0", "1"]
+    assert row(capsys.readouterr().out, "phish") == ["phish", "0", "1", "0", "0", "0", "1"]

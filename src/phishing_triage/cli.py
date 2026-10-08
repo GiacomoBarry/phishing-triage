@@ -10,13 +10,12 @@ import json
 import os
 import sys
 from collections.abc import Sequence
-from enum import IntEnum
 from pathlib import Path
-from typing import NoReturn
 
 from dotenv import load_dotenv
 
 from phishing_triage.cache_file import JsonFileCache, WriteOnlyCache
+from phishing_triage.command_line import ArgumentParser, ExitCode, print_error
 from phishing_triage.config import SettingsError, load_settings
 from phishing_triage.core import (
     LABELS,
@@ -40,34 +39,11 @@ from phishing_triage.providers import build_providers
 
 REPORTS_DIR = Path("reports")
 
-
-class ExitCode(IntEnum):
-    """What the process exit code means. 3 and above are errors."""
-
-    CLEAN = 0
-    SUSPICIOUS = 1
-    MALICIOUS = 2
-    UNREADABLE_FILE = 3
-    UNPARSEABLE_EMAIL = 4
-    USAGE_ERROR = 5
-    REPORT_NOT_SAVED = 6
-    INVALID_SETTINGS = 7
-    NO_ATTACHED_EMAIL = 8
-
-
 VERDICT_EXIT_CODES = {
     Verdict.CLEAN: ExitCode.CLEAN,
     Verdict.SUSPICIOUS: ExitCode.SUSPICIOUS,
     Verdict.MALICIOUS: ExitCode.MALICIOUS,
 }
-
-
-class _ArgumentParser(argparse.ArgumentParser):
-    """argparse exits with 2 on bad usage, which here would mean "malicious"."""
-
-    def error(self, message: str) -> NoReturn:
-        self.print_usage(sys.stderr)
-        self.exit(ExitCode.USAGE_ERROR, f"{self.prog}: error: {message}\n")
 
 
 def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None = None) -> int:
@@ -82,13 +58,13 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
     try:
         settings = load_settings(args.settings)
     except SettingsError as error:
-        _print_error(str(error))
+        print_error(str(error))
         return ExitCode.INVALID_SETTINGS
 
     try:
         raw_email = email_path.read_bytes()
     except OSError as error:
-        _print_error(f"could not read {email_path}: {error.strerror}")
+        print_error(f"could not read {email_path}: {error.strerror}")
         return ExitCode.UNREADABLE_FILE
 
     try:
@@ -107,13 +83,13 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
             print(f"Warning: could not save the cache ({cache.save_error})", file=sys.stderr)
     except UnparseableAttachedEmailError as error:
         # The Wrapper Email itself is fine: it is the email inside it that isn't.
-        _print_error(f"{email_path}: {error}")
+        print_error(f"{email_path}: {error}")
         return ExitCode.UNPARSEABLE_EMAIL
     except UnparseableEmailError as error:
-        _print_error(f"{email_path} is not a parseable email. {error}")
+        print_error(f"{email_path} is not a parseable email. {error}")
         return ExitCode.UNPARSEABLE_EMAIL
     except NoAttachedEmailError as error:
-        _print_error(f"{email_path}: {error} Leave out --inner to triage the email itself.")
+        print_error(f"{email_path}: {error} Leave out --inner to triage the email itself.")
         return ExitCode.NO_ATTACHED_EMAIL
 
     # Print before saving, so the analyst still sees the Verdict if saving fails.
@@ -126,7 +102,7 @@ def main(argv: Sequence[str] | None = None, providers: Sequence[Provider] | None
     try:
         saved_path = _save_report(report, report_json)
     except OSError as error:
-        _print_error(f"could not save the Triage Report: {error}")
+        print_error(f"could not save the Triage Report: {error}")
         return ExitCode.REPORT_NOT_SAVED
     print(f"Triage Report saved to {saved_path}", file=sys.stderr)
 
@@ -157,7 +133,7 @@ def _real_providers(settings: Settings) -> list[Provider]:
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = _ArgumentParser(
+    parser = ArgumentParser(
         prog="phishing-triage",
         description="Triage one reported email (.eml) using reputation lookups only.",
         epilog="Exit codes: 0 clean, 1 suspicious, 2 malicious, 3+ error.",
@@ -291,7 +267,3 @@ def _received_lines(report: TriageReport) -> list[str]:
             " (unverified: the sender could have forged it, as no Trusted Relay recorded it)"
         )
     return lines
-
-
-def _print_error(message: str) -> None:
-    print(f"Error: {message}", file=sys.stderr)
