@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from enum import StrEnum
 
-from phishing_triage.core.attachments import Attachment
+from phishing_triage.core.attachments import Attachment, display_filename
 from phishing_triage.core.urls import defang_domain, defang_url, find_urls, host_of
 
 
@@ -94,3 +94,13 @@ def defanged(observable: Observable) -> str:
     if observable.kind in (ObservableKind.DOMAIN, ObservableKind.SENDER_DOMAIN):
         return defang_domain(observable.value)
     return observable.value
+
+
+def describe_observable(observable: Observable, attachments: list[Attachment]) -> str:
+    """One Observable as a line safe to paste: its label, its defanged value and,
+    for a hash, the name of each attachment it belongs to."""
+    line = f"{LABELS[observable.kind]}: {defanged(observable)}"
+    if observable.kind is ObservableKind.SHA256:
+        filenames = [display_filename(a.filename) for a in attachments if a.sha256 == observable.value]
+        line += f" ({', '.join(filenames)})"
+    return line

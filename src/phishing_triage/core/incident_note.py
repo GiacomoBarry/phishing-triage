@@ -1,12 +1,13 @@
 """The Incident Note: a plain-text summary of a Triage Report for a ticket.
 
-Generating it is a pure function: it only reads the report.
-Recommended Actions arrive in a later ticket.
+Generating it is a pure function: it only reads the report. It has five
+sections, in order: the summary line, Key Findings, the defanged
+Observables, Not Checked and Recommended Actions.
 """
 
-from phishing_triage.core.attachments import display_filename
 from phishing_triage.core.findings import Finding
-from phishing_triage.core.observables import LABELS, Observable, ObservableKind, defanged
+from phishing_triage.core.observables import describe_observable
+from phishing_triage.core.recommended_actions import recommended_actions
 from phishing_triage.core.report import TriageReport
 
 
@@ -17,6 +18,7 @@ def incident_note(report: TriageReport) -> str:
         _key_findings(report),
         _observables(report),
         _not_checked(report),
+        _recommended_actions(report),
     ]
     return "\n\n".join(sections) + "\n"
 
@@ -43,11 +45,11 @@ def _key_findings(report: TriageReport) -> str:
 def _observables(report: TriageReport) -> str:
     """Every Observable, defanged so nobody can click it from the ticket.
 
-    These are not yet IOCs: nothing has been judged malicious until
-    Reputation Lookups arrive.
+    Not every Observable is an IOC: the ones a Provider reported as
+    malicious are listed again in Recommended Actions, to be blocked.
     """
     lines = ["Observables (defanged):"]
-    lines += [f"- {_observable_line(o, report)}" for o in report.observables]
+    lines += [f"- {describe_observable(o, report.attachments)}" for o in report.observables]
     if not report.observables:
         lines.append("- None.")
     return "\n".join(lines)
@@ -59,7 +61,7 @@ def _not_checked(report: TriageReport) -> str:
     if report.cap_reason:
         lines.append(report.cap_reason)
     lines += [
-        f"- {_observable_line(item.observable, report)}: {'; '.join(item.reasons)}"
+        f"- {describe_observable(item.observable, report.attachments)}: {'; '.join(item.reasons)}"
         for item in report.not_checked
     ]
     if not report.not_checked:
@@ -67,15 +69,11 @@ def _not_checked(report: TriageReport) -> str:
     return "\n".join(lines)
 
 
-def _observable_line(observable: Observable, report: TriageReport) -> str:
-    """One Observable, made safe to paste, with its filename(s) if it's a hash."""
-    line = f"{LABELS[observable.kind]}: {defanged(observable)}"
-    if observable.kind is ObservableKind.SHA256:
-        filenames = [
-            display_filename(a.filename) for a in report.attachments if a.sha256 == observable.value
-        ]
-        line += f" ({', '.join(filenames)})"
-    return line
+def _recommended_actions(report: TriageReport) -> str:
+    """Suggested next steps for the analyst. The tool never carries them out."""
+    lines = ["Recommended Actions:"]
+    lines += [f"- {action}" for action in recommended_actions(report)]
+    return "\n".join(lines)
 
 
 def describe_finding(finding: Finding) -> str:

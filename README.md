@@ -72,6 +72,22 @@ Each red-flag rule that fires adds a Finding worth some points. The points add u
 
 A **Verdict** can only be clean if every URL and attachment got a real answer from at least one Provider. If any was **Not Checked** (no key, the Provider was down or rate limited, or no Provider handles that kind), a clean Verdict is raised to suspicious. The report keeps the Verdict from before this cap and the reason, and the Incident Note's **Not Checked** section lists every gap.
 
+### The Incident Note and Recommended Actions
+
+The Incident Note has five sections, in order: a one-line summary (Verdict, Score, sender, subject), the key Findings with their evidence, every Observable defanged, what was Not Checked and why, and **Recommended Actions**.
+
+Recommended Actions are next steps for you, chosen from a fixed list based on the Verdict and which Findings fired. The tool only suggests them: it never blocks, searches, resets or emails anything. The list, in the order it appears:
+
+1. Block the malicious URLs, domains or attachment hashes (each listed, defanged), when a Provider reported any as malicious.
+2. Block the sender domain, when the Verdict is malicious.
+3. Search all mailboxes for copies of the email and remove them, when the Verdict is malicious or suspicious.
+4. Check web proxy logs for anyone who visited the links (malicious or suspicious, with links).
+5. Check whether anyone opened the attachment (malicious or suspicious, with attachments).
+6. If a recipient entered their password, reset it and revoke their sessions (malicious or suspicious, with a link, and a Lookalike Domain, display-name impersonation or newly registered domain Finding).
+7. Confirm with the apparent sender through a contact you already know, when there is a Reply-To mismatch or display-name impersonation.
+8. Check the Not Checked items by hand before closing, when anything was Not Checked.
+9. Close with no action and tell the reporter the email looks safe, when the Verdict is clean and nothing was Not Checked.
+
 ### Tuning the settings
 
 The points and thresholds live in [`src/phishing_triage/settings.toml`](src/phishing_triage/settings.toml). To tune them, copy that file, edit the copy and pass it in:

@@ -36,6 +36,7 @@ from phishing_triage.core import (
     Outcome,
     Progress,
     ProviderStopped,
+    Rule,
     RuleInput,
     Settings,
     TriageReport,
@@ -226,7 +227,7 @@ def test_decisive_finding_makes_the_verdict_malicious_whatever_the_score() -> No
     assert report.score == 0
 
 
-def test_incident_note_lists_key_findings_with_evidence() -> None:
+def test_incident_note_has_all_five_sections_in_order() -> None:
     report = triage(load("reply_to_mismatch.eml"), DEFAULT_SETTINGS, providers=[])
 
     note = incident_note(report)
@@ -244,6 +245,11 @@ def test_incident_note_lists_key_findings_with_evidence() -> None:
         "\n"
         "Not Checked:\n"
         "- Sender domain: example[.]org: no Provider looks this kind of Observable up yet\n"
+        "\n"
+        "Recommended Actions:\n"
+        "- Confirm with the apparent sender through a contact you already know,"
+        " not the details in this email.\n"
+        "- Check the Not Checked items by hand before closing the ticket.\n"
     )
 
 
@@ -2200,4 +2206,106 @@ def test_a_phrase_inside_a_longer_matched_phrase_is_not_quoted_twice() -> None:
 
     assert [finding.evidence for finding in urgency_findings(raw)] == [
         'Urgency Phrase found: "immediate action required" (subject).'
+    ]
+
+
+# --- Recommended Actions: the last section of the Incident Note (ticket 15) ---
+
+
+def recommended_actions(report: TriageReport) -> list[str]:
+    """The Recommended Actions in a report's Incident Note, one per line, without the bullets."""
+    section = incident_note(report).split("Recommended Actions:\n")[1]
+    return [line.removeprefix("- ") for line in section.splitlines() if line.startswith("- ")]
+
+
+def test_a_clean_email_with_everything_checked_is_closed_with_no_action() -> None:
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()])
+
+    assert report.verdict is Verdict.CLEAN
+    assert recommended_actions(report) == [
+        "Close with no action, and tell the reporter the email looks safe.",
+    ]
+
+
+def test_a_verdict_capped_for_missing_evidence_asks_for_the_gaps_to_be_checked_by_hand() -> None:
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[])
+
+    assert report.verdict_before_cap is Verdict.CLEAN
+    assert report.verdict is Verdict.SUSPICIOUS
+    assert recommended_actions(report) == [
+        "Search all mailboxes for copies of this email (same sender or subject) and remove them.",
+        "Check web proxy logs for anyone who visited the email's links.",
+        "Check the Not Checked items by hand before closing the ticket.",
+    ]
+
+
+def test_a_malicious_email_gets_blocking_and_clean_up_actions_naming_each_ioc_defanged() -> None:
+    raw = email_with_body(plain="Pay here: https://evil.example/invoice", attachment="notes")
+    links = FakeProvider(answers={"https://evil.example/invoice": LISTED})
+    hashes = FakeProvider(name="HashIntel", handles=frozenset({ObservableKind.SHA256}), default=LISTED)
+
+    report = triage(raw, DEFAULT_SETTINGS, providers=[links, hashes])
+
+    assert report.verdict is Verdict.MALICIOUS
+    sha256 = report.attachments[0].sha256
+    note = incident_note(report)
+    assert note.endswith(
+        "Recommended Actions:\n"
+        "- Block these malicious URLs, domains or attachment hashes:\n"
+        "  - URL: hxxps://evil[.]example/invoice\n"
+        f"  - SHA-256: {sha256} (notes.txt)\n"
+        "- Block the sender domain example[.]org.\n"
+        "- Search all mailboxes for copies of this email (same sender or subject) and remove them.\n"
+        "- Check web proxy logs for anyone who visited the email's links.\n"
+        "- Check whether anyone opened the attachment.\n"
+    )
+    assert "http" not in note
+
+
+def a_finding_from(rule_id: str) -> Rule:
+    """A test-only rule giving one 40-point Finding as if `rule_id` had fired: suspicious on its own."""
+
+    def rule(rule_input: RuleInput, settings: Settings) -> list[Finding]:
+        return [Finding(rule_id=rule_id, points=40, decisive=False, evidence="Test-only Finding.")]
+
+    return rule
+
+
+@pytest.mark.parametrize("rule_id", ["lookalike_domain", "display_name_impersonation", "newly_registered_domain"])
+def test_a_credential_phishing_sign_with_a_link_suggests_resetting_passwords(rule_id: str) -> None:
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()], rules=[a_finding_from(rule_id)])
+
+    assert report.verdict is Verdict.SUSPICIOUS
+    assert (
+        "If a recipient entered their password, reset it and revoke their active sessions."
+        in recommended_actions(report)
+    )
+
+
+def test_no_password_reset_without_a_link_or_a_credential_phishing_sign() -> None:
+    no_link = email_with_body(plain="Hello.", from_header=None)
+    suspicious_without_link = triage(
+        no_link, DEFAULT_SETTINGS, providers=[FakeProvider()], rules=[a_finding_from("lookalike_domain")]
+    )
+    suspicious_without_sign = triage(
+        LINK_EMAIL, DEFAULT_SETTINGS, providers=[FakeProvider()], rules=[a_finding_from("url_shortener")]
+    )
+
+    assert recommended_actions(suspicious_without_link) == [
+        "Search all mailboxes for copies of this email (same sender or subject) and remove them.",
+    ]
+    assert recommended_actions(suspicious_without_sign) == [
+        "Search all mailboxes for copies of this email (same sender or subject) and remove them.",
+        "Check web proxy logs for anyone who visited the email's links.",
+    ]
+
+
+def test_a_clean_email_with_something_not_checked_is_not_closed_until_it_is_checked_by_hand() -> None:
+    urls_only = FakeProvider(handles=frozenset({ObservableKind.URL}))
+
+    report = triage(LINK_EMAIL, DEFAULT_SETTINGS, providers=[urls_only])
+
+    assert report.verdict is Verdict.CLEAN
+    assert recommended_actions(report) == [
+        "Check the Not Checked items by hand before closing the ticket.",
     ]

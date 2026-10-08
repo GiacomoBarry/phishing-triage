@@ -390,6 +390,20 @@ def test_without_api_keys_links_are_not_checked_so_the_email_cannot_be_clean(
     assert "RDAP: Domain evil[.]example -> not checked" in out
 
 
+def test_readable_view_ends_with_recommended_actions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email_path = tmp_path / "link.eml"
+    email_path.write_text("From: a@example.org\nSubject: Hi\n\nhttps://evil.example/x\n")
+
+    main([str(email_path)], providers=[ListsEverything()])
+
+    out = capsys.readouterr().out
+    actions = out.split("Recommended Actions:\n")[1]
+    assert actions.startswith("- Block these malicious URLs, domains or attachment hashes:\n")
+    assert "- Block the sender domain example[.]org.\n" in actions
+
+
 class QuickFakeProvider:
     """A fake Provider allowing 60,000 lookups a minute, so it waits only about 1ms between them."""
 
