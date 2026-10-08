@@ -1,5 +1,7 @@
 # 02: Settings, Score and Verdict, with the Reply-To mismatch rule
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/2 — GitHub is now the source of truth.
+
 **What to build:** The scoring machinery, proved end to end by one real rule. A Finding has a rule identifier, points, whether it is decisive, and evidence. Findings add up to a Score, and thresholds turn the Score into a Verdict. An email whose Reply-To domain differs from its From domain now gets a Finding that shows up in the report, the terminal view and the Incident Note.
 
 **Blocked by:** 01

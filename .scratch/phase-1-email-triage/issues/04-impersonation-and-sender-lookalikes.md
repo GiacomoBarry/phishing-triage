@@ -1,5 +1,7 @@
 # 04: Display-name impersonation and sender Lookalike Domains
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/4 — GitHub is now the source of truth.
+
 **What to build:** The tool spots emails pretending to be a well-known organisation: a display name claiming a Protected brand while the sending domain isn't theirs, and sender domains that are Lookalike Domains of Protected Domains.
 
 **Blocked by:** 02

@@ -1,5 +1,7 @@
 # 03: Authentication results and the Received chain
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/3 — GitHub is now the source of truth.
+
 **What to build:** The tool reports what the receiving server recorded for SPF, DKIM and DMARC, and turns failures into Findings. It also shows the Received chain hop by hop and identifies the Claimed Origin, clearly labelled unverified unless a Trusted Relay recorded it.
 
 **Blocked by:** 02

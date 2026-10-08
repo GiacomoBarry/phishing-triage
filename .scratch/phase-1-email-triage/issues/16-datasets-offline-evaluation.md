@@ -1,5 +1,7 @@
 # 16: Datasets and offline evaluation
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/16 — GitHub is now the source of truth.
+
 **What to build:** The maintainer can download public datasets and run a rules-only evaluation that prints Verdict counts for phish versus ham, to catch false positives early. It is rerun after each rule ticket.
 
 **Blocked by:** 02

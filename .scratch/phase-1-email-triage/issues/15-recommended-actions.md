@@ -1,5 +1,7 @@
 # 15: Recommended Actions
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/15 — GitHub is now the source of truth.
+
 **What to build:** The Incident Note is complete with all five sections, ending in Recommended Actions chosen from a fixed list based on the Verdict and which Findings fired. The tool suggests them and never performs them.
 
 **Blocked by:** 03, 04, 05, 09

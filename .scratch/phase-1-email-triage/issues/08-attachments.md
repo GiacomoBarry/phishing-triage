@@ -1,5 +1,7 @@
 # 08: Attachments: hashes and attachment Findings
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/8 — GitHub is now the source of truth.
+
 **What to build:** The tool lists each attachment with its hashes and flags dangerous-looking attachments, using only what is visible without opening or unpacking them (ADR 0001).
 
 **Blocked by:** 02

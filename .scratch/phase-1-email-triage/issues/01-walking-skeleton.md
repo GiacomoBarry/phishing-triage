@@ -1,5 +1,7 @@
 # 01: Walking skeleton
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/1 — GitHub is now the source of truth.
+
 **What to build:** The thinnest working version of the tool. Running the CLI on a `.eml` file performs a Triage through the core, saves a Triage Report and prints a short result. There are no rules yet, so every parseable email gets a clean Verdict. This sets up the project, the core/CLI split and the living docs that every later ticket builds on.
 
 **Blocked by:** None (can start immediately)

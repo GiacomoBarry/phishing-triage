@@ -1,5 +1,7 @@
 # Spec: Phase 1 email Triage
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/18 — GitHub is now the source of truth.
+
 Status: ready-for-agent
 
 ## Problem Statement

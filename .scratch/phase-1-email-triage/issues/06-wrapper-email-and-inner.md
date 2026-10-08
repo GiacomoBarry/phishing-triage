@@ -1,5 +1,7 @@
 # 06: Wrapper Email detection and `--inner`
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/6 — GitHub is now the source of truth.
+
 **What to build:** When the `.eml` is a Wrapper Email (a user's report with the suspected phish attached), the tool warns that it may be triaging the wrong email, and `--inner` triages the attached email instead.
 
 **Blocked by:** 01

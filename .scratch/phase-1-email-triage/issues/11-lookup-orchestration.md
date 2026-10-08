@@ -1,5 +1,7 @@
 # 11: Lookup orchestration
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/11 — GitHub is now the source of truth.
+
 **What to build:** A link-heavy email finishes in reasonable time on free-tier keys without wasting quota. Lookups are de-duplicated, domains go first, URL lookups are capped, rate limits are respected by waiting, and the terminal shows progress.
 
 **Blocked by:** 10

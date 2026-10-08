@@ -1,5 +1,7 @@
 # 10: VirusTotal Provider
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/10 — GitHub is now the source of truth.
+
 **What to build:** URLs, domains and attachment hashes are looked up on VirusTotal. Three or more malicious engine detections is a Decisive Finding; one or two adds points.
 
 **Blocked by:** 09

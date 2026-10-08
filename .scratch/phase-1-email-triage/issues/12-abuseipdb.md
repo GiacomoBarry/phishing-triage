@@ -1,5 +1,7 @@
 # 12: AbuseIPDB on the Claimed Origin
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/12 — GitHub is now the source of truth.
+
 **What to build:** The Claimed Origin IP is looked up on AbuseIPDB, and a high abuse-confidence score adds a Finding.
 
 **Blocked by:** 03, 09

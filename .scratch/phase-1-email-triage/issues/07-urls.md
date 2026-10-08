@@ -1,5 +1,7 @@
 # 07: URLs: extraction, offline decoding, shorteners and link Lookalikes
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/7 — GitHub is now the source of truth.
+
 **What to build:** The tool finds every link in the email, decodes obfuscated links offline to their real destinations, flags shorteners and lookalike link domains, and lists the URLs as defanged IOCs in the Incident Note. It never fetches, follows or expands any URL (ADR 0001).
 
 **Blocked by:** 04

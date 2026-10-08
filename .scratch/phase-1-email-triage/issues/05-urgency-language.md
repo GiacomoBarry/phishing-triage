@@ -1,5 +1,7 @@
 # 05: Urgency language
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/5 — GitHub is now the source of truth.
+
 **What to build:** The tool flags emails that pressure the reader ("account suspended", "verify within 24 hours") using an editable list of phrases, behind the same rule interface as other Findings so a smarter checker could replace it later.
 
 **Blocked by:** 02

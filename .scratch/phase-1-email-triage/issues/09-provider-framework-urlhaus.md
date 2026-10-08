@@ -1,5 +1,7 @@
 # 09: Provider framework, URLhaus, and "clean requires evidence"
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/9 — GitHub is now the source of truth.
+
 **What to build:** The tool can now make Reputation Lookups. Providers share one shape and are passed into the core. URLhaus is the first real Provider, and a URLhaus listing is a Decisive Finding. The tool is honest about gaps: missing keys or errors give Not Checked with a reason, and the Verdict can never be clean if any URL or attachment was Not Checked.
 
 **Blocked by:** 07, 08

@@ -1,5 +1,7 @@
 # 13: RDAP: newly registered domains
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/13 — GitHub is now the source of truth.
+
 **What to build:** Each sender and link domain's registration date is looked up via RDAP (asking the registry, never contacting the domain), and recently registered domains add a Finding.
 
 **Blocked by:** 09

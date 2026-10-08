@@ -1,5 +1,7 @@
 # 17: Evaluation with live lookups
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/17 — GitHub is now the source of truth.
+
 **What to build:** The maintainer can run the evaluation on a small sample with real Providers enabled, within free-tier rate limits, to see how Reputation Lookups change the results compared with the offline baseline.
 
 **Blocked by:** 09, 16

@@ -1,5 +1,7 @@
 # 14: Reputation cache
 
+**Moved to:** https://github.com/GiacomoBarry/phishing-triage/issues/14 — GitHub is now the source of truth.
+
 **What to build:** Re-running a Triage on the same sample doesn't use up Provider quota, but stale "Unknown" results don't hide a newly flagged phishing link.
 
 **Blocked by:** 09
