@@ -69,7 +69,7 @@ def triage(
     received_hops = read_received_chain(message)
     claimed_origin = find_claimed_origin(received_hops, settings.trusted_relays)
 
-    attachments = extract_attachments(message)
+    attachments = extract_attachments(raw_email)
     observables = extract_observables(message, attachments, claimed_origin.ip if claimed_origin else "")
     lookups = run_lookups(
         observables,
@@ -129,7 +129,7 @@ def _choose_email(raw_email: bytes, inner: bool) -> tuple[bytes, EmailMessage, s
     Wrapper Email it was taken from ("" if none) and any warnings about the choice.
     """
     message = _parse(raw_email)
-    attached_emails = find_attached_emails(message)
+    attached_emails = find_attached_emails(raw_email)
     count = len(attached_emails)
     if not inner:
         if count == 0:
@@ -151,13 +151,13 @@ def _choose_email(raw_email: bytes, inner: bool) -> tuple[bytes, EmailMessage, s
             f"The Wrapper Email has {count} emails attached. Only the first was triaged;"
             " extract the others by hand to triage them."
         )
-    chosen_message = _parse(chosen.raw)
-    if find_attached_emails(chosen_message):
+    chosen_message = _parse(chosen)
+    if find_attached_emails(chosen):
         warnings.append(
             "The triaged email has an email attached too. --inner only looks one level deep,"
             " so extract that one by hand to triage it."
         )
-    return chosen.raw, chosen_message, wrapper_sha256, warnings
+    return chosen, chosen_message, wrapper_sha256, warnings
 
 
 def _parse(raw_email: bytes) -> EmailMessage:

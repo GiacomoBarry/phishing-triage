@@ -8,11 +8,14 @@ ZIP reads only the ZIP's table of contents, never the files inside.
 
 import hashlib
 import io
+import re
 import unicodedata
 import zipfile
 from collections.abc import Iterator
 from dataclasses import dataclass
+from email import policy
 from email.message import EmailMessage
+from email.parser import BytesParser
 
 # The first bytes ("magic bytes") that identify common archive formats,
 # whatever the file is called.
@@ -67,9 +70,9 @@ class Attachment:
     password_protected: bool  # Only ever True for ZIPs, the one format we can check.
 
 
-def extract_attachments(message: EmailMessage) -> list[Attachment]:
+def extract_attachments(raw_email: bytes) -> list[Attachment]:
     """Describe every attachment in the email, in the order they appear."""
-    return [_describe(part) for part in attachment_parts(message)]
+    return [_describe(part) for part in attachment_parts(raw_email)]
 
 
 def extension_of(filename: str) -> str:
@@ -108,20 +111,55 @@ def display_filename(filename: str) -> str:
     )
 
 
-def attachment_parts(part: EmailMessage, is_top: bool = True) -> Iterator[EmailMessage]:
-    """Yield each attachment part without looking inside attached emails.
+def attachment_parts(raw_email: bytes) -> Iterator[EmailMessage]:
+    """Yield each attachment part of the email, without looking inside attached emails.
 
     A part counts if it is marked as an attachment, has a filename (so an
     .exe marked "inline" can't slip past), or is an attached email.
+
+    The email is walked from its raw bytes, not from Python's parsed email,
+    because the parser rebuilds an attached email (changing line endings,
+    decoding headers, refolding them), and its hash must be of the bytes
+    exactly as they were sent (ADR 0014). Each part is parsed for its
+    headers only, so its body stays as the original bytes.
     """
+    yield from _attachment_parts(raw_email, is_top=True)
+
+
+def _attachment_parts(raw_part: bytes, is_top: bool) -> Iterator[EmailMessage]:
+    part = BytesParser(policy=policy.default).parsebytes(raw_part, headersonly=True)
+    assert isinstance(part, EmailMessage)  # guaranteed by policy.default
     is_attached_email = part.get_content_type() == "message/rfc822"
     if not is_top and (part.is_attachment() or part.get_filename() or is_attached_email):
         yield part
         return
-    if part.is_multipart():
-        for sub_part in part.iter_parts():
-            assert isinstance(sub_part, EmailMessage)  # guaranteed by policy.default
-            yield from attachment_parts(sub_part, is_top=False)
+    boundary = part.get_boundary()
+    if part.get_content_maintype() == "multipart" and boundary:
+        for sub_part in _split_multipart(content_of(part), boundary):
+            yield from _attachment_parts(sub_part, is_top=False)
+
+
+def _split_multipart(body: bytes, boundary: str) -> list[bytes]:
+    """Split a multipart body into the raw bytes of each part.
+
+    Each part starts after a line "--boundary" and ends just before the next
+    one. The line break before "--boundary" belongs to the boundary, not the
+    part (RFC 2046). The line "--boundary--" closes the last part; anything
+    after it is ignored.
+    """
+    delimiter = re.compile(
+        rb"(?:\r?\n)?^--" + re.escape(boundary.encode("ascii", "replace")) + rb"(?P<close>--)?[ \t]*(?:\r?\n|$)",
+        re.MULTILINE,
+    )
+    delimiters = list(delimiter.finditer(body))
+    parts = []
+    for number, current in enumerate(delimiters):
+        if current.group("close"):
+            break
+        is_last = number + 1 == len(delimiters)
+        end = len(body) if is_last else delimiters[number + 1].start()
+        parts.append(body[current.end() : end])
+    return parts
 
 
 def _describe(part: EmailMessage) -> Attachment:
@@ -142,10 +180,11 @@ def _describe(part: EmailMessage) -> Attachment:
 
 
 def content_of(part: EmailMessage) -> bytes:
-    """Return the attachment's bytes, decoded from the email's transfer encoding."""
-    if part.get_content_type() == "message/rfc822":
-        attached_email = part.get_payload(0)
-        return attached_email.as_bytes() if hasattr(attached_email, "as_bytes") else b""
+    """Return a part's body bytes, decoded from the email's transfer encoding (such as base64).
+
+    `part` must come from attachment_parts(), so its body is still the
+    original bytes: for an attached email, the email exactly as it was sent.
+    """
     payload = part.get_payload(decode=True)
     return payload if isinstance(payload, bytes) else b""
 

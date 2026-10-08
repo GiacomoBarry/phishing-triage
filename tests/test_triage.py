@@ -2495,3 +2495,53 @@ def test_inner_refuses_an_attached_eml_file_that_is_not_an_email() -> None:
 
     with pytest.raises(UnparseableEmailError):
         triage(raw, DEFAULT_SETTINGS, providers=[], inner=True)
+
+
+# The same phish as a mail program saves it: CRLF line endings, a folded
+# header and a Subject in encoded-word form. Re-serialising it would change
+# all three, and with them its SHA-256.
+PHISH_AS_SAVED = (
+    b"From: PayPal <service@paypa1.com>\r\n"
+    b"Subject: =?utf-8?q?Your_account_is_locked_=E2=9A=A0?=\r\n"
+    b"X-Mailer: Something\r\n"
+    b"  Folded Onto A Second Line\r\n"
+    b"\r\n"
+    b"Verify your account: https://paypa1-login.example/verify\r\n"
+)
+
+
+def a_wrapper_email_around(phish: bytes, transfer_encoding: str = "") -> bytes:
+    """A user's report written byte by byte, with `phish` attached as message/rfc822."""
+    encoding_header = f"Content-Transfer-Encoding: {transfer_encoding}\r\n".encode() if transfer_encoding else b""
+    return (
+        b"From: Jo Bloggs <jo@example.org>\r\n"
+        b"Subject: Fwd: is this real?\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b'Content-Type: multipart/mixed; boundary="outer"\r\n'
+        b"\r\n"
+        b"--outer\r\n"
+        b"Content-Type: text/plain\r\n"
+        b"\r\n"
+        b"Is this a phish?\r\n"
+        b"--outer\r\n"
+        b"Content-Type: message/rfc822\r\n"
+        + encoding_header
+        + b"Content-Disposition: attachment\r\n"
+        b"\r\n"
+        + phish
+        + b"\r\n--outer--\r\n"
+    )
+
+
+def test_an_attached_email_is_hashed_as_its_original_bytes() -> None:
+    wrapper = a_wrapper_email_around(PHISH_AS_SAVED)
+    phish_sha256 = hashlib.sha256(PHISH_AS_SAVED).hexdigest()
+
+    as_wrapper = triage(wrapper, DEFAULT_SETTINGS, providers=[])
+    inner = triage(wrapper, DEFAULT_SETTINGS, providers=[], inner=True)
+
+    # The same phish saved straight to disk as a .eml file hashes the same.
+    assert as_wrapper.attachments[0].sha256 == phish_sha256
+    assert as_wrapper.attachments[0].size == len(PHISH_AS_SAVED)
+    assert inner.source_sha256 == phish_sha256
+    assert inner.subject == "Your account is locked ⚠"
