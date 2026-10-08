@@ -135,7 +135,12 @@ def main(
         for path in _pick(_samples(args.samples / label), sample_size, args.seed)
     ]
     # On stderr, so it never mixes with the results. A full run takes minutes.
-    print(f"Triaging {len(samples)} samples offline...", file=sys.stderr, flush=True)
+    # Live, this first pass only finds each sample's Observables for the
+    # estimate (and gives the offline counts to compare with).
+    if args.live:
+        print(f"Reading {len(samples)} samples to estimate the lookups (no lookups yet)...", file=sys.stderr, flush=True)
+    else:
+        print(f"Triaging {len(samples)} samples offline...", file=sys.stderr, flush=True)
     offline_results = [_evaluate_sample(label, path, settings, rules) for label, path in samples]
     if not args.live:
         print(f"Offline evaluation of {args.samples}: rules only, no Providers.")

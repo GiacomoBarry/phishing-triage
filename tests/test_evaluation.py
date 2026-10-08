@@ -447,6 +447,20 @@ def test_live_mode_warns_how_many_lookups_it_will_make_before_making_any(
     assert warning < err.index("FakeRegistry was asked")
 
 
+def test_live_mode_says_it_reads_the_samples_first_without_claiming_to_be_offline(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A live run first triages the samples with no Providers, to find the
+    # Observables for the estimate. Its progress line says so, rather than
+    # saying it is triaging offline.
+    main([str(SAMPLES), "--live"], providers=[ListsEveryURL()])
+
+    err = capsys.readouterr().err
+    assert "offline..." not in err
+    assert "Reading 8 samples to estimate the lookups (no lookups yet)..." in err
+    assert "Triaging 8 samples with live lookups..." in err
+
+
 def test_the_lookup_estimate_leaves_out_urls_over_the_lookup_cap(
     tmp_path: Path, in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
