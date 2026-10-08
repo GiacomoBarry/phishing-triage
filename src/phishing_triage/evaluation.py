@@ -12,6 +12,7 @@ Like the CLI, this lives outside the core: it reads files and prints.
 
 import argparse
 import os
+import random
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -28,6 +29,11 @@ from phishing_triage.providers import build_providers
 
 SAMPLES_DIR = Path("samples")  # Ignored by git: raw samples hold real people's addresses
 SAMPLE_LABELS = ("phish", "ham")
+
+# A live run asks real Providers on free tiers, so by default it takes a small
+# sample of each label. The seed makes the pick the same every time (ADR 0016).
+LIVE_SAMPLE_SIZE = 20
+DEFAULT_SEED = 1
 
 
 class Failure(StrEnum):
@@ -87,7 +93,12 @@ def main(
         print_error(str(error))
         return ExitCode.INVALID_SETTINGS
 
-    samples = [(label, path) for label in SAMPLE_LABELS for path in _samples(args.samples / label)]
+    sample_size = args.sample or (LIVE_SAMPLE_SIZE if args.live else None)
+    samples = [
+        (label, path)
+        for label in SAMPLE_LABELS
+        for path in _pick(_samples(args.samples / label), sample_size, args.seed)
+    ]
     if args.live:
         if providers is None:
             providers = _real_providers(settings)
@@ -174,6 +185,17 @@ def _samples(folder: Path) -> list[Path]:
     )
 
 
+def _pick(paths: list[Path], size: int | None, seed: int) -> list[Path]:
+    """`size` of `paths` picked at random, the same ones every time for the same seed, or all of them.
+
+    Each label gets its own random generator, so the phish picked don't
+    depend on how many ham there are. The pick is kept in path order.
+    """
+    if size is None or size >= len(paths):
+        return paths
+    return sorted(random.Random(seed).sample(paths, size))
+
+
 def _counts_table(results: list[SampleResult]) -> str:
     """How many samples of each label got each outcome."""
     lines = [_table_line("Label", [*COLUMNS, "total"])]
@@ -242,12 +264,35 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="ask the real Providers (API keys from .env), over a small sample, and count the final Verdicts",
     )
     parser.add_argument(
+        "--sample",
+        type=_positive_whole_number,
+        metavar="N",
+        help=f"evaluate N phish and N ham picked at random (default: every sample offline, {LIVE_SAMPLE_SIZE} live)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help=f"pick a different random sample; the same seed always picks the same samples (default: {DEFAULT_SEED})",
+    )
+    parser.add_argument(
         "--settings",
         type=Path,
         metavar="PATH",
         help="use an edited settings file instead of the defaults, to tune the weights",
     )
     return parser.parse_args(argv)
+
+
+def _positive_whole_number(text: str) -> int:
+    """Read a sample size, refusing anything below 1 (argparse reports the error as bad usage)."""
+    try:
+        number = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"{number} is not 1 or more")
+    return number
 
 
 if __name__ == "__main__":

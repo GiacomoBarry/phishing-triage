@@ -325,3 +325,95 @@ def test_live_mode_says_how_many_observables_were_not_checked(
     main([str(SAMPLES), "--live"], providers=[KnowsNothingButURLs()])
 
     assert "Observables Not Checked: 4 (3 in phish, 1 in ham)" in capsys.readouterr().out
+
+
+def many_samples(folder: Path, phish: int, ham: int) -> Path:
+    """A samples folder with `phish` and `ham` copies of one plain email, numbered."""
+    email = (SAMPLES / "ham" / "monthly_update.eml").read_bytes()
+    for label, count in (("phish", phish), ("ham", ham)):
+        (folder / label).mkdir(parents=True)
+        for number in range(1, count + 1):
+            (folder / label / f"{label}_{number:02}.eml").write_bytes(email)
+    return folder
+
+
+def listed_paths(output: str) -> list[str]:
+    """The sample paths in the --list lines, in order."""
+    return [line.split()[3] for line in output.splitlines() if line.split()[:1] in (["phish"], ["ham"]) and "/" in line]
+
+
+def test_live_mode_takes_20_phish_and_20_ham_by_default(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A label with fewer samples than that has all of them taken.
+    samples = many_samples(in_tmp_path / "samples", phish=25, ham=3)
+
+    main([str(samples), "--live"], providers=[ListsEveryURL()])
+
+    output = capsys.readouterr().out
+    assert row(output, "phish")[-1] == "20"
+    assert row(output, "ham")[-1] == "3"
+
+
+def test_the_sample_size_can_be_chosen_and_the_same_samples_are_picked_every_time(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    samples = many_samples(in_tmp_path / "samples", phish=25, ham=25)
+
+    main([str(samples), "--live", "--sample", "3", "--list"], providers=[ListsEveryURL()])
+    first = listed_paths(capsys.readouterr().out)
+    main([str(samples), "--live", "--sample", "3", "--list"], providers=[ListsEveryURL()])
+    second = listed_paths(capsys.readouterr().out)
+
+    assert len(first) == 6
+    assert first == second
+    # Picked at random, not simply the first three of each.
+    assert first[:3] != [str(samples / "phish" / f"phish_0{n}.eml") for n in (1, 2, 3)]
+
+
+def test_a_different_seed_picks_a_different_sample(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    samples = many_samples(in_tmp_path / "samples", phish=25, ham=25)
+
+    main([str(samples), "--live", "--sample", "3", "--list"], providers=[ListsEveryURL()])
+    default_seed = listed_paths(capsys.readouterr().out)
+    main([str(samples), "--live", "--sample", "3", "--seed", "2", "--list"], providers=[ListsEveryURL()])
+    other_seed = listed_paths(capsys.readouterr().out)
+
+    assert default_seed != other_seed
+
+
+def test_an_offline_run_with_the_same_sample_size_picks_the_same_samples(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # So a live run can be compared with the offline baseline on exactly the same emails.
+    samples = many_samples(in_tmp_path / "samples", phish=25, ham=25)
+
+    main([str(samples), "--live", "--sample", "3", "--list"], providers=[ListsEveryURL()])
+    live = listed_paths(capsys.readouterr().out)
+    main([str(samples), "--sample", "3", "--list"])
+    offline = listed_paths(capsys.readouterr().out)
+
+    assert live == offline
+
+
+def test_an_offline_run_takes_every_sample_by_default(
+    in_tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    samples = many_samples(in_tmp_path / "samples", phish=25, ham=3)
+
+    main([str(samples)])
+
+    assert row(capsys.readouterr().out, "phish")[-1] == "25"
+
+
+@pytest.mark.parametrize("size", ["0", "-1", "lots"])
+def test_a_sample_size_that_is_not_a_positive_whole_number_is_bad_usage(
+    size: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main([str(SAMPLES), "--live", "--sample", size])
+
+    assert exit_info.value.code == 5
+    assert "--sample" in capsys.readouterr().err
